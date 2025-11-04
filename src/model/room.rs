@@ -57,7 +57,6 @@ impl Room {
 
     pub fn handle_connect(&mut self, now: SystemTime, user_id: UserId, name: String, flags: VoiceStateFlags) -> RoomResult<()> {
         if let Some(participant) = self.find_participant_mut(user_id) {
-            participant.name = name;
             participant.connect(now, flags)?;
             return Ok(())
         }

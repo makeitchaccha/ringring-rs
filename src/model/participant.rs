@@ -4,7 +4,7 @@ use crate::model::activity::{Activity, ActivityError, ActivityResult, VoiceState
 
 pub struct Participant{
     user_id: UserId,
-    pub name: String,
+    name: String,
     history: Vec<Activity>
 }
 
@@ -19,6 +19,10 @@ impl Participant {
 
     pub fn user_id(&self) -> UserId {
         self.user_id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn is_connected(&self) -> bool {
