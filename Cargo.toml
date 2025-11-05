@@ -1,0 +1,10 @@
+[package]
+name = "ringring-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = "1.48.0"
+
+[dependencies.serenity]
+version = "0.12.4"
