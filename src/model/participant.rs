@@ -1,5 +1,5 @@
-use std::time::SystemTime;
 use serenity::all::UserId;
+use tokio::time::Instant;
 use crate::model::activity::{Activity, ActivityError, ActivityResult, VoiceStateFlags};
 
 pub struct Participant{
@@ -29,7 +29,7 @@ impl Participant {
         self.history.last().map_or(false, |a| a.is_ongoing())
     }
 
-    pub fn connect(&mut self, now: SystemTime, flags: VoiceStateFlags) -> ActivityResult<()> {
+    pub fn connect(&mut self, now: Instant, flags: VoiceStateFlags) -> ActivityResult<()> {
         if self.is_connected() {
             return Err(ActivityError::AlreadyStarted)
         }
@@ -38,13 +38,13 @@ impl Participant {
         Ok(())
     }
 
-    pub fn disconnect(&mut self, now: SystemTime) -> ActivityResult<()> {
+    pub fn disconnect(&mut self, now: Instant) -> ActivityResult<()> {
         let last = self.history.last_mut().ok_or(ActivityError::NoActiveActivity)?;
         last.end_at(now)?;
         Ok(())
     }
 
-    pub fn update(&mut self, now: SystemTime, flags: VoiceStateFlags) -> Result<(), ActivityError> {
+    pub fn update(&mut self, now: Instant, flags: VoiceStateFlags) -> Result<(), ActivityError> {
         if !self.is_connected() {
             return Err(ActivityError::NoActiveActivity)
         }

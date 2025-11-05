@@ -1,5 +1,5 @@
-use std::time::SystemTime;
 use serenity::all::VoiceState;
+use tokio::time::Instant;
 
 #[derive(Debug)]
 pub enum ActivityError {
@@ -11,13 +11,13 @@ pub enum ActivityError {
 pub type ActivityResult<T> = Result<T, ActivityError>;
 
 pub struct Activity {
-    start: SystemTime,
-    end: Option<SystemTime>,
+    start: Instant,
+    end: Option<Instant>,
     flags: VoiceStateFlags
 }
 
 impl Activity {
-    pub fn start_at(start: SystemTime, flags: VoiceStateFlags) -> Self {
+    pub fn start_at(start: Instant, flags: VoiceStateFlags) -> Self {
         Activity{
             start,
             end: None,
@@ -25,9 +25,9 @@ impl Activity {
         }
     }
 
-    pub fn end_at(&mut self, now: SystemTime) -> ActivityResult<()> {
+    pub fn end_at(&mut self, now: Instant) -> ActivityResult<()> {
         match self.end {
-            Some(end) => Err(ActivityError::AlreadyEnded),
+            Some(_) => Err(ActivityError::AlreadyEnded),
             None => {
                 self.end = Some(now);
                 Ok(())
