@@ -7,7 +7,7 @@ use serenity::model::channel::Message;
 use serenity::prelude::*;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
-use tracing::debug;
+use tracing::{debug, error};
 use ringring_rs::model::RoomManager;
 
 
@@ -55,7 +55,6 @@ impl EventHandler for Handler {
 
         let manager = self.room_manager.clone();
 
-        // 💡 NEW: 定期実行タスクの起動
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_secs(10));
 
@@ -66,7 +65,7 @@ impl EventHandler for Handler {
 
                 let now = Instant::now();
                 if let Err(e) = manager.cleanup(now).await {
-                    eprintln!("Error during room cleanup: {:?}", e);
+                    error!("Error during room cleanup: {:?}", e);
                 }
             }
         });
