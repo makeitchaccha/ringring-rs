@@ -10,6 +10,7 @@ use crate::model::participant::Participant;
 pub enum RoomError {
     ParticipantNotFound,
     Activity(ActivityError),
+    AlreadyDisposed
 }
 
 #[derive(Debug, PartialEq, Eq)]

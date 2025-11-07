@@ -6,6 +6,7 @@ use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::prelude::*;
 use tokio::time::Instant;
+use tokio::time::{self, Duration};
 use tracing::debug;
 use ringring_rs::model::RoomManager;
 
@@ -21,7 +22,7 @@ async fn main() {
         | GatewayIntents::GUILD_VOICE_STATES;
 
     // Create a new instance of the Client, logging in as a bot.
-    let handler = Handler{room_manager: Arc::new(RoomManager::new())};
+    let handler = Handler{room_manager: Arc::new(RoomManager::new(16))};
     let mut client =
         Client::builder(&token, intents).event_handler(handler).await.expect("Err creating client");
 
@@ -51,6 +52,24 @@ impl EventHandler for Handler {
 
     async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
         debug!("cache is ready for guilds: {:?}", guilds);
+
+        let manager = self.room_manager.clone();
+
+        // 💡 NEW: 定期実行タスクの起動
+        tokio::spawn(async move {
+            let mut interval = time::interval(Duration::from_secs(10));
+
+            interval.tick().await;
+
+            loop {
+                interval.tick().await;
+
+                let now = Instant::now();
+                if let Err(e) = manager.cleanup(now).await {
+                    eprintln!("Error during room cleanup: {:?}", e);
+                }
+            }
+        });
     }
 
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
