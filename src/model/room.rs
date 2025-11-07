@@ -5,6 +5,7 @@ use tracing::debug;
 use crate::model::activity::{ActivityError, VoiceStateFlags};
 use crate::model::participant::Participant;
 
+const IDLE_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Debug)]
 pub enum RoomError {
@@ -95,9 +96,8 @@ impl Room {
         participant.disconnect(now)?;
         let status = self.get_status();
         if status == RoomStatus::Idle {
-            // fixme: literal duration
             debug!("no one is in room");
-            self.expires_at = Some(now + std::time::Duration::from_secs(60));
+            self.expires_at = Some(now + std::time::Duration::from_secs(IDLE_TIMEOUT_SECS));
         }
         debug!("finish handle disconnect");
         Ok(status)
