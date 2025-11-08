@@ -5,11 +5,13 @@ use serenity::all::{GuildId, VoiceState};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::prelude::*;
+use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
 use tracing::{debug, error};
 use ringring_rs::model::RoomManager;
 
+const CLEANUP_INTERVAL_SECS: u64 = 30;
 
 #[tokio::main]
 async fn main() {
@@ -55,8 +57,45 @@ impl EventHandler for Handler {
 
         let manager = self.room_manager.clone();
 
+        let now = Instant::now();
+        let timestamp = SystemTime::now();
+
+        let mut tasks = JoinSet::new();
+
+        for guild_id in guilds {
+            let guild = ctx.cache.guild(guild_id).unwrap();
+            for (user_id, voice_state) in guild.voice_states.iter() {
+                let flags = voice_state.into();
+                let channel_id = voice_state.channel_id.unwrap();
+                let name = guild.members.get(user_id).unwrap().display_name().into();
+                let user_id = user_id.into();
+
+                let manager_for_task = manager.clone();
+
+                let connect_task = async move {
+                    manager_for_task.handle_connect_event(
+                        now,
+                        timestamp,
+                        channel_id,
+                        guild_id,
+                        user_id,
+                        name,
+                        flags
+                    ).await
+                };
+                tasks.spawn(connect_task);
+            }
+        }
+
+        while let Some(res) = tasks.join_next().await {
+            if let Err(why) = res {
+                debug!("error joining voice channel: {why:?}");
+            }
+        }
+
+        let manager = self.room_manager.clone();
         tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(10));
+            let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
 
             interval.tick().await;
 
