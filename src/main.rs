@@ -1,15 +1,15 @@
-use std::env;
-use std::sync::Arc;
-use std::time::SystemTime;
-use serenity::all::{GuildId, VoiceState};
+use ringring_rs::model::RoomManager;
+use ringring_rs::service::renderer::timeline::TimelineRenderer;
+use serenity::all::{CreateMessage, GuildId, Timestamp, VoiceState};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::prelude::*;
+use std::env;
+use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
 use tracing::{debug, error};
-use ringring_rs::model::RoomManager;
 
 const CLEANUP_INTERVAL_SECS: u64 = 30;
 
@@ -20,13 +20,16 @@ async fn main() {
     // Login with a bot token from the environment
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
     // Set gateway intents, which decides what events the bot will be notified about
-    let intents = GatewayIntents::GUILDS
-        | GatewayIntents::GUILD_VOICE_STATES;
+    let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;
 
     // Create a new instance of the Client, logging in as a bot.
-    let handler = Handler{room_manager: Arc::new(RoomManager::new(16))};
-    let mut client =
-        Client::builder(&token, intents).event_handler(handler).await.expect("Err creating client");
+    let handler = Handler {
+        room_manager: Arc::new(RoomManager::new(16)),
+    };
+    let mut client = Client::builder(&token, intents)
+        .event_handler(handler)
+        .await
+        .expect("Err creating client");
 
     // Start listening for events by starting a single shard
     if let Err(why) = client.start().await {
@@ -35,11 +38,14 @@ async fn main() {
 }
 
 fn format_voice_state_nicely(voice_state: &VoiceState) -> String {
-    format!("VoiceState {{ channel_id: {:?}, guild_id: {:?}, user_id: {:?} }}", voice_state.channel_id, voice_state.guild_id, voice_state.user_id)
+    format!(
+        "VoiceState {{ channel_id: {:?}, guild_id: {:?}, user_id: {:?} }}",
+        voice_state.channel_id, voice_state.guild_id, voice_state.user_id
+    )
 }
 
-struct Handler{
-    room_manager: Arc<RoomManager>
+struct Handler {
+    room_manager: Arc<RoomManager>,
 }
 
 #[async_trait]
@@ -58,7 +64,7 @@ impl EventHandler for Handler {
         let manager = self.room_manager.clone();
 
         let now = Instant::now();
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
 
         let mut tasks = JoinSet::new();
 
@@ -73,15 +79,11 @@ impl EventHandler for Handler {
                 let manager_for_task = manager.clone();
 
                 let connect_task = async move {
-                    manager_for_task.handle_connect_event(
-                        now,
-                        timestamp,
-                        channel_id,
-                        guild_id,
-                        user_id,
-                        name,
-                        flags
-                    ).await
+                    manager_for_task
+                        .handle_connect_event(
+                            now, timestamp, channel_id, guild_id, user_id, name, flags,
+                        )
+                        .await
                 };
                 tasks.spawn(connect_task);
             }
@@ -108,18 +110,84 @@ impl EventHandler for Handler {
                 }
             }
         });
+
+        let manager = self.room_manager.clone();
+        let http = ctx.http.clone();
+        tokio::spawn(async move {
+            let mut interval = time::interval(Duration::from_mins(1));
+
+            interval.tick().await;
+
+            let timeline_renderer = TimelineRenderer::new();
+            loop {
+                interval.tick().await;
+                for room in manager.get_all_rooms().await {
+                    let http = http.clone();
+                    let room = room.lock().await;
+                    room.channel_id()
+                        .send_message(
+                            http,
+                            CreateMessage::new().embed(timeline_renderer.generate_ongoing_embed(
+                                Instant::now(),
+                                Timestamp::now(),
+                                &room,
+                            )),
+                        )
+                        .await
+                        .unwrap();
+                }
+            }
+        });
     }
 
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
-        debug!("voice_state_update: {:?} -> {}", old.as_ref().map(|x| format_voice_state_nicely(&x)), format_voice_state_nicely(&new));
+        debug!(
+            "voice_state_update: {:?} -> {}",
+            old.as_ref().map(|x| format_voice_state_nicely(&x)),
+            format_voice_state_nicely(&new)
+        );
         let manager = self.room_manager.clone();
         let now = Instant::now();
-        let timestamp = SystemTime::now();
+        let timestamp = Timestamp::now();
         // if newly connected
         if old.is_none() {
             let flags = (&new).into();
             let name = new.member.unwrap().display_name().into();
-            manager.handle_connect_event(
+            manager
+                .handle_connect_event(
+                    now,
+                    timestamp,
+                    new.channel_id.unwrap(),
+                    new.guild_id.unwrap(),
+                    new.user_id,
+                    name,
+                    flags,
+                )
+                .await
+                .unwrap();
+            return;
+        }
+
+        // if just disconnected
+        if new.channel_id.is_none() {
+            let old = old.unwrap();
+            manager
+                .handle_disconnect_event(now, old.channel_id.unwrap(), new.user_id)
+                .await
+                .unwrap();
+            return;
+        }
+
+        // switch channel
+        let old = old.unwrap();
+        manager
+            .handle_disconnect_event(now, old.channel_id.unwrap(), new.user_id)
+            .await
+            .unwrap();
+        let flags = (&new).into();
+        let name = new.member.unwrap().display_name().into();
+        manager
+            .handle_connect_event(
                 now,
                 timestamp,
                 new.channel_id.unwrap(),
@@ -127,40 +195,9 @@ impl EventHandler for Handler {
                 new.user_id,
                 name,
                 flags,
-            ).await.unwrap();
-            return;
-        }
-
-        // if just disconnected
-        if new.channel_id.is_none() {
-            let old = old.unwrap();
-            manager.handle_disconnect_event(
-                now,
-                old.channel_id.unwrap(),
-                new.user_id
-            ).await.unwrap();
-            return;
-        }
-
-        // switch channel
-        let old = old.unwrap();
-        manager.handle_disconnect_event(
-            now,
-            old.channel_id.unwrap(),
-            new.user_id
-        ).await.unwrap();
-        let flags = (&new).into();
-        let name = new.member.unwrap().display_name().into();
-        manager.handle_connect_event(
-            now,
-            timestamp,
-            new.channel_id.unwrap(),
-            new.guild_id.unwrap(),
-            new.user_id,
-            name,
-            flags,
-        ).await.unwrap();
+            )
+            .await
+            .unwrap();
         return;
     }
 }
-

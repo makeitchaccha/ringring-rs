@@ -1,3 +1,4 @@
+use std::time::Duration;
 use serenity::all::VoiceState;
 use tokio::time::Instant;
 
@@ -10,6 +11,7 @@ pub enum ActivityError {
 
 pub type ActivityResult<T> = Result<T, ActivityError>;
 
+#[derive(Debug)]
 pub struct Activity {
     start: Instant,
     end: Option<Instant>,
@@ -43,8 +45,28 @@ impl Activity {
         self.end.is_none()
     }
 
+    pub fn is_following(&self, prev: &Activity) -> bool {
+        prev.end.map_or(false, |end| {end == self.start})
+    }
+
+    pub fn start(&self) -> Instant {
+        self.start
+    }
+
+    pub fn end(&self) -> Option<Instant> {
+        self.end
+    }
+    
     pub fn flags(&self) -> VoiceStateFlags {
         self.flags
+    }
+
+    pub fn calculate_duration(&self, now: Instant) -> Duration {
+        if let Some(end) = self.end {
+            end.duration_since(self.start)
+        } else {
+            now.duration_since(self.start)
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use std::time::SystemTime;
-use serenity::all::{ChannelId, GuildId, UserId};
+use serenity::all::{ChannelId, GuildId, Timestamp, UserId};
 use tokio::time::Instant;
 use tracing::debug;
 use crate::model::activity::{ActivityError, VoiceStateFlags};
@@ -20,10 +20,11 @@ pub enum RoomStatus {
     Idle,
 }
 
+#[derive(Debug)]
 pub struct Room {
     guild_id: GuildId,
     channel_id: ChannelId,
-    start: SystemTime,
+    timestamp: Timestamp,
     created_at: Instant,
     participants: Vec<Participant>, // retains all participant since a room was created.
     expires_at: Option<Instant>,
@@ -38,23 +39,35 @@ impl From<ActivityError> for RoomError {
 }
 
 impl Room {
-    pub fn new(guild_id: GuildId, channel_id: ChannelId, created_at: Instant, start: SystemTime) -> Self {
+    pub fn new(guild_id: GuildId, channel_id: ChannelId, created_at: Instant, timestamp: Timestamp) -> Self {
         Room {
             guild_id,
             channel_id,
-            start,
+            timestamp,
             created_at,
             participants: Vec::new(),
             expires_at: None,
         }
     }
 
-    fn guild_id(&self) -> GuildId {
+    pub fn guild_id(&self) -> GuildId {
         self.guild_id
     }
 
-    fn channel_id(&self) -> ChannelId {
+    pub fn channel_id(&self) -> ChannelId {
         self.channel_id
+    }
+
+    pub fn timestamp(&self) -> Timestamp {
+        self.timestamp
+    }
+
+    pub fn created_at(&self) -> Instant {
+        self.created_at
+    }
+
+    pub fn participants(&self) -> &Vec<Participant> {
+        self.participants.as_ref()
     }
 
     fn find_participant(&self, user_id: UserId) -> Option<&Participant> {

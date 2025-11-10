@@ -1,7 +1,9 @@
+use std::time::Duration;
 use serenity::all::UserId;
 use tokio::time::Instant;
 use crate::model::activity::{Activity, ActivityError, ActivityResult, VoiceStateFlags};
 
+#[derive(Debug)]
 pub struct Participant{
     user_id: UserId,
     name: String,
@@ -23,6 +25,10 @@ impl Participant {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn history(&self) -> &Vec<Activity> {
+        &self.history
     }
 
     pub fn is_connected(&self) -> bool {
@@ -58,5 +64,13 @@ impl Participant {
         let activity = Activity::start_at(now, flags);
         self.history.push(activity);
         Ok(())
+    }
+
+    pub fn calculate_duration(&self, now: Instant) -> Duration {
+        let mut duration = Duration::ZERO;
+        for activity in &self.history {
+            duration += activity.calculate_duration(now)
+        }
+        duration
     }
 }

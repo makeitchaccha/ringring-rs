@@ -3,10 +3,10 @@ use serenity::all::{ChannelId, GuildId, UserId};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
+use serenity::model::Timestamp;
 use tokio::sync::{Mutex};
 use tokio::time::Instant;
 use tracing::debug;
-use tracing::field::debug;
 
 pub struct RoomManager{
     shards: Vec<Arc<Mutex<HashMap<ChannelId, Arc<Mutex<Room>>>>>>,
@@ -38,6 +38,19 @@ impl RoomManager {
         }
     }
 
+    pub async fn get_all_rooms(&self) -> Vec<Arc<Mutex<Room>>> {
+        let mut all_rooms = Vec::new();
+
+        for shard_mutex in self.shards.iter() {
+            let rooms_guard = shard_mutex.lock().await;
+
+            for room_mutex in rooms_guard.values() {
+                all_rooms.push(room_mutex.clone());
+            }
+        }
+        all_rooms
+    }
+
     fn calculate_shard_index(channel_id: ChannelId, num_shards: usize) -> usize{
         (channel_id.get() % num_shards as u64) as usize
     }
@@ -46,7 +59,7 @@ impl RoomManager {
         self.shards.get(Self::calculate_shard_index(channel_id, self.num_shards)).unwrap()
     }
 
-    pub async fn handle_connect_event(&self, now: Instant, start: SystemTime, channel_id: ChannelId, guild_id: GuildId, user_id: UserId, name: String, flags: VoiceStateFlags) -> RoomManagerResult<()> {
+    pub async fn handle_connect_event(&self, now: Instant, start: Timestamp, channel_id: ChannelId, guild_id: GuildId, user_id: UserId, name: String, flags: VoiceStateFlags) -> RoomManagerResult<()> {
         debug!("handle connect event");
         let mut rooms_guard = self.get_shard(channel_id).lock().await;
         let room_guard = rooms_guard.entry(channel_id).or_insert_with(|| {

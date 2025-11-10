@@ -7,6 +7,7 @@ edition = "2024"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
 log = "0.4.28"
+chrono = "0.4.42"
 
 [dependencies.tokio]
 version = "1.48.0"
