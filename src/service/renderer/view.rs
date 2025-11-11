@@ -1,7 +1,21 @@
 use crate::model::VoiceStateFlags;
 use crate::service::renderer::view::FillStyle::{Active, Deafened, Muted};
 use crate::service::renderer::view::StrokeStyle::{Default, Streaming};
+use tiny_skia::Pixmap;
 use tokio::time::Instant;
+
+pub struct Timeline {
+    pub start: Instant,
+    pub end: Instant,
+    pub indicator: Option<Instant>,
+    pub entries: Vec<TimelineEntry>,
+}
+
+pub struct TimelineEntry {
+    pub avatar: Pixmap,
+    pub name: String,
+    pub sections: Vec<RenderSection>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FillStyle {
