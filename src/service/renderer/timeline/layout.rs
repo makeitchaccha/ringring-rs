@@ -1,13 +1,16 @@
+use ab_glyph::ScaleFont;
+use tiny_skia::NonZeroRect;
 use crate::service::renderer::timeline::policy::AspectRatioPolicy;
 
-pub struct LTRB{
+#[derive(Copy, Clone)]
+pub struct Margin {
     pub left: f32,
     pub top: f32,
     pub right: f32,
     pub bottom: f32,
 }
 
-impl LTRB{
+impl Margin {
     pub fn horizontal(&self) -> f32{
         self.left + self.right
     }
@@ -17,28 +20,72 @@ impl LTRB{
     }
 }
 
-pub struct Layout{
-    pub margin: LTRB,
+pub struct LayoutConfig {
+    pub margin: Margin,
     pub headline_width: f32,
     pub min_timeline_width: f32,
-    aspect_ratio_policy: AspectRatioPolicy,
+    pub aspect_ratio_policy: AspectRatioPolicy,
     pub entry_height: f32,
 }
 
-impl Layout{
-    pub fn height(&self, n_entries: usize) -> f32{
-        self.headline_width * n_entries as f32 + self.margin.vertical()
+impl LayoutConfig {
+    pub fn calculate(&self, n_entries: usize) -> Layout {
+        let total_height = self.entry_height * n_entries as f32 + self.margin.vertical();
+        let timeline_width = self.aspect_ratio_policy.calculate_timeline_width(total_height, self.fixed_content_width(), self.min_timeline_width);
+        let total_width = timeline_width + self.fixed_content_width();
+
+        Layout {
+            total_width,
+            total_height,
+            headline_width: self.headline_width,
+            timeline_width,
+            margin: self.margin,
+            entry_height: self.entry_height,
+        }
     }
 
     fn fixed_content_width(&self) -> f32{
         self.headline_width + self.margin.horizontal()
     }
+}
 
-    pub fn timeline_width(&self, n_entries: usize) -> f32{
-        self.aspect_ratio_policy.calculate_timeline_width(self.height(n_entries), self.fixed_content_width(), self.min_timeline_width)
+pub struct Layout {
+    total_width: f32,
+    total_height: f32,
+
+    margin: Margin,
+    headline_width: f32,
+    entry_height: f32,
+    timeline_width: f32,
+}
+
+
+impl Layout {
+    pub fn total_width(&self) -> f32 {
+        self.total_width
     }
 
-    pub fn width(&self, n_entries: usize) -> f32{
-        self.timeline_width(n_entries) + self.fixed_content_width()
+    pub fn total_height(&self) -> f32 {
+        self.total_height
+    }
+
+    // returns timeline bounding-box for i-th entry.
+    pub fn timeline_bb(&self, i: usize) -> NonZeroRect {
+        NonZeroRect::from_xywh(
+            self.margin.left + self.headline_width,
+            self.margin.top + i as f32 * self.entry_height,
+            self.timeline_width,
+            self.entry_height,
+        ).unwrap()
+    }
+
+    // returns headline bounding-box for i-th entry.
+    pub fn headline_bb(&self, i: usize) -> NonZeroRect {
+        NonZeroRect::from_xywh(
+            self.margin.left,
+            self.margin.top + i as f32 * self.entry_height,
+            self.headline_width,
+            self.entry_height,
+        ).unwrap()
     }
 }
