@@ -2,27 +2,46 @@ mod policy;
 mod layout;
 
 use crate::model::{Activity, Participant, Room};
-use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle};
+use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline};
 use chrono::TimeDelta;
 use serenity::all::{
     CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, EmbedImage, FormattedTimestamp,
     FormattedTimestampStyle, Mentionable, Timestamp,
 };
+use tiny_skia::{Pixmap, Transform};
 use tokio::time::Instant;
+use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
+use crate::service::renderer::timeline::policy::AspectRatioPolicy;
 
-pub enum TimelineError {}
+pub enum TimelineRendererError {}
 
-pub type TimelineResult<T> = Result<T, TimelineError>;
+pub type TimelineRendererResult<T> = Result<T, TimelineRendererError>;
 
 pub struct TimelineRenderer{
+    layout_config: LayoutConfig,
 }
 
 impl TimelineRenderer {
     pub fn new() -> TimelineRenderer {
-        TimelineRenderer {}
+        TimelineRenderer {
+            layout_config: LayoutConfig{
+                margin: Margin{
+                    left: 10.0,
+                    top: 10.0,
+                    right: 10.0,
+                    bottom: 10.0,
+                },
+                avatar_column_width: 100.0,
+                min_timeline_width: 900.0,
+                entry_height: 70.0,
+                aspect_ratio_policy: AspectRatioPolicy::discord_thumbnail_4_3(),
+            }
+        }
     }
 
-    fn convert_to_render_sections(now: Instant, history: &Vec<Activity>) -> Vec<RenderSection> {
+    fn convert_to_render_sections(now: Instant, start: Instant, end: Instant, history: &Vec<Activity>) -> Vec<RenderSection> {
+
+        let duration_sec = (end - start).as_secs_f32();
         let mut render_sections = Vec::new();
 
         for i in 0..history.len() {
@@ -44,9 +63,12 @@ impl TimelineRenderer {
                 !next.is_following(current)
             };
 
+            let start_ratio = (current.start() - start).as_secs_f32()/duration_sec;
+            let end_ratio = (current.end().unwrap_or(now) - start).as_secs_f32()/duration_sec;
+
             render_sections.push(RenderSection {
-                start: current.start(),
-                end: current.end().unwrap_or(now),
+                start_ratio,
+                end_ratio,
                 fill_style,
                 stroke_style,
                 stroke_left_end,
@@ -81,7 +103,21 @@ impl TimelineRenderer {
             .join("\n")
     }
 
-    pub fn generate_image(&self) -> TimelineResult<()> {
+    pub fn generate_image(&self, timeline: &Timeline) -> TimelineRendererResult<()> {
+        let n_entries = timeline.entries.len();
+        let layout = self.layout_config.calculate(n_entries);
+        let mut pixmap = Pixmap::new(layout.total_width() as u32, layout.total_height() as u32).unwrap();
+
+        for (i, entry) in timeline.entries.iter().enumerate() {
+            let _headline_bb = layout.headline_bb(i);
+            let timeline_bb = layout.timeline_bb(i);
+            let transformer = Transform::from_bbox(timeline_bb);
+
+            for section in &entry.sections {
+
+            }
+        }
+
         Ok(())
     }
 

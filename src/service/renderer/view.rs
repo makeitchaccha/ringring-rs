@@ -50,8 +50,8 @@ impl StrokeStyle {
 }
 
 pub struct RenderSection {
-    pub start: Instant,
-    pub end: Instant,
+    pub start_ratio: f32,
+    pub end_ratio: f32,
     pub fill_style: FillStyle,
     pub stroke_style: StrokeStyle,
 

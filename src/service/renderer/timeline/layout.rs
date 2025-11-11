@@ -22,7 +22,7 @@ impl Margin {
 
 pub struct LayoutConfig {
     pub margin: Margin,
-    pub headline_width: f32,
+    pub avatar_column_width: f32,
     pub min_timeline_width: f32,
     pub aspect_ratio_policy: AspectRatioPolicy,
     pub entry_height: f32,
@@ -37,7 +37,7 @@ impl LayoutConfig {
         Layout {
             total_width,
             total_height,
-            headline_width: self.headline_width,
+            avatar_column_width: self.avatar_column_width,
             timeline_width,
             margin: self.margin,
             entry_height: self.entry_height,
@@ -45,7 +45,7 @@ impl LayoutConfig {
     }
 
     fn fixed_content_width(&self) -> f32{
-        self.headline_width + self.margin.horizontal()
+        self.avatar_column_width + self.margin.horizontal()
     }
 }
 
@@ -54,8 +54,8 @@ pub struct Layout {
     total_height: f32,
 
     margin: Margin,
-    headline_width: f32,
     entry_height: f32,
+    avatar_column_width: f32,
     timeline_width: f32,
 }
 
@@ -72,7 +72,7 @@ impl Layout {
     // returns timeline bounding-box for i-th entry.
     pub fn timeline_bb(&self, i: usize) -> NonZeroRect {
         NonZeroRect::from_xywh(
-            self.margin.left + self.headline_width,
+            self.margin.left + self.avatar_column_width,
             self.margin.top + i as f32 * self.entry_height,
             self.timeline_width,
             self.entry_height,
@@ -84,7 +84,7 @@ impl Layout {
         NonZeroRect::from_xywh(
             self.margin.left,
             self.margin.top + i as f32 * self.entry_height,
-            self.headline_width,
+            self.avatar_column_width,
             self.entry_height,
         ).unwrap()
     }
