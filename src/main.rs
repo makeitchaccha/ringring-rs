@@ -6,6 +6,7 @@ use serenity::model::channel::Message;
 use serenity::prelude::*;
 use std::env;
 use std::sync::Arc;
+use serenity::futures::future::err;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
@@ -61,7 +62,7 @@ async fn main() {
             for room in manager.get_all_rooms().await {
                 let http = http.clone();
                 let room = room.lock().await;
-                room.channel_id()
+                match room.channel_id()
                     .send_message(
                         http,
                         CreateMessage::new().embed(timeline_renderer.generate_ongoing_embed(
@@ -70,8 +71,12 @@ async fn main() {
                             &room,
                         )),
                     )
-                    .await
-                    .unwrap();
+                    .await {
+                    Ok(_) => {},
+                    Err(e) => {
+                        error!("Error sending message: {:?}", e);
+                    }
+                }
             }
         }
     });
@@ -114,11 +119,30 @@ impl EventHandler for Handler {
         let mut tasks = JoinSet::new();
 
         for guild_id in guilds {
-            let guild = ctx.cache.guild(guild_id).unwrap();
+            let guild = match ctx.cache.guild(guild_id) {
+                Some(guild) => guild,
+                None => {
+                    error!("CRITICAL: Guild ID {} reported by cache_ready event is missing from cache", guild_id);
+                    continue;
+                }
+            };
             for (user_id, voice_state) in guild.voice_states.iter() {
                 let flags = voice_state.into();
-                let channel_id = voice_state.channel_id.unwrap();
-                let name = guild.members.get(user_id).unwrap().display_name().into();
+                let channel_id = match voice_state.channel_id {
+                    Some(channel_id) => channel_id,
+                    None => {
+                        debug!("Voice State for User {} reported by cache_ready event is not joining voice channel", voice_state.user_id);
+                        continue;
+                    }
+                };
+                let member = match guild.members.get(user_id) {
+                    Some(member) => member,
+                    None => {
+                        error!("CRITICAL: failed to get member for User ID {} on Guild ID {} from cache", user_id, guild_id);
+                        continue;
+                    }
+                };
+                let name = member.display_name().into();
                 let user_id = user_id.into();
 
                 let manager_for_task = manager.clone();
@@ -153,41 +177,80 @@ impl EventHandler for Handler {
         // if newly connected
         if old.is_none() {
             let flags = (&new).into();
-            let name = new.member.unwrap().display_name().into();
-            manager
+            let member = match new.member {
+                Some(member) => member,
+                None => {
+                    error!("CRITICAL: newly connected Voice State is missing member.");
+                    return;
+                }
+            };
+            let name = member.display_name().into();
+            let channel_id = match new.channel_id {
+                Some(channel_id) => channel_id,
+                None => {
+                    error!("CRITICAL: newly connected Voice State is missing Channel ID.");
+                    return;
+                }
+            };
+            let guild_id = match new.guild_id {
+                Some(guild_id) => guild_id,
+                None => {
+                    error!("CRITICAL: newly connected Voice State is missing Guild ID.");
+                    return;
+                }
+            };
+            match manager
                 .handle_connect_event(
                     now,
                     timestamp,
-                    new.channel_id.unwrap(),
-                    new.guild_id.unwrap(),
+                    channel_id,
+                    guild_id,
                     new.user_id,
                     name,
                     flags,
                 )
-                .await
-                .unwrap();
+                .await{
+                Ok(_) => {},
+                Err(e) => {
+                    error!("Error handling connect event on manager: {:?}", e);
+                }
+            }
             return;
         }
 
         // if just disconnected
         if new.channel_id.is_none() {
-            let old = old.unwrap();
-            manager
+            let old = match old {
+                Some(old) => old,
+                None => {
+                    error!("CRITICAL: Voice State Update is missing both old and new voice channel");
+                    return;
+                }
+            };
+            match manager
                 .handle_disconnect_event(now, old.channel_id.unwrap(), new.user_id)
-                .await
-                .unwrap();
+                .await {
+                Ok(_) => {},
+                Err(e) => {
+                    error!("Error handling disconnect event on manager: {:?}", e);
+                }
+            }
             return;
         }
 
         // switch channel
         let old = old.unwrap();
-        manager
+        match manager
             .handle_disconnect_event(now, old.channel_id.unwrap(), new.user_id)
-            .await
-            .unwrap();
+            .await {
+            Ok(_) => {},
+            Err(e) => {
+                error!("Error handling disconnect event on manager: {:?}", e);
+            }
+        }
         let flags = (&new).into();
         let name = new.member.unwrap().display_name().into();
-        manager
+        match manager
             .handle_connect_event(
                 now,
                 timestamp,
@@ -197,8 +260,12 @@ impl EventHandler for Handler {
                 name,
                 flags,
             )
-            .await
-            .unwrap();
+            .await {
+            Ok(_) => {},
+            Err(e) => {
+                error!("Error handling connect event on manager: {:?}", e);
+            }
+        }
         return;
     }
 }
