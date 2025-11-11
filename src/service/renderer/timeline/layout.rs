@@ -1,4 +1,3 @@
-use ab_glyph::ScaleFont;
 use tiny_skia::NonZeroRect;
 use crate::service::renderer::timeline::policy::AspectRatioPolicy;
 

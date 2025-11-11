@@ -5,7 +5,7 @@ use crate::model::{Activity, Participant, Room};
 use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline};
 use chrono::TimeDelta;
 use serenity::all::{
-    CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, EmbedImage, FormattedTimestamp,
+    CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp,
     FormattedTimestampStyle, Mentionable, Timestamp,
 };
 use tiny_skia::{Pixmap, Transform};
