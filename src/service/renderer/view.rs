@@ -13,7 +13,6 @@ pub struct Timeline {
 
 pub struct TimelineEntry {
     pub avatar: Pixmap,
-    pub name: String,
     pub sections: Vec<RenderSection>,
     pub color: Color,
 }
