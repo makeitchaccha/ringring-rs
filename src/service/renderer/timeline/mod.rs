@@ -1,18 +1,27 @@
+mod policy;
+mod layout;
+
 use crate::model::{Activity, Participant, Room};
 use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle};
 use chrono::TimeDelta;
 use serenity::all::{
-    CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp, FormattedTimestampStyle,
-    Mentionable, Timestamp,
+    CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, EmbedImage, FormattedTimestamp,
+    FormattedTimestampStyle, Mentionable, Timestamp,
 };
 use tokio::time::Instant;
 
-pub struct TimelineRenderer;
+pub enum TimelineError {}
+
+pub type TimelineResult<T> = Result<T, TimelineError>;
+
+pub struct TimelineRenderer{
+}
 
 impl TimelineRenderer {
     pub fn new() -> TimelineRenderer {
         TimelineRenderer {}
     }
+
     fn convert_to_render_sections(now: Instant, history: &Vec<Activity>) -> Vec<RenderSection> {
         let mut render_sections = Vec::new();
 
@@ -70,6 +79,10 @@ impl TimelineRenderer {
             })
             .collect::<Vec<String>>()
             .join("\n")
+    }
+
+    pub fn generate_image(&self) -> TimelineResult<()> {
+        Ok(())
     }
 
     pub fn generate_ongoing_embed(
