@@ -23,13 +23,58 @@ async fn main() {
     let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;
 
     // Create a new instance of the Client, logging in as a bot.
+    let room_manager = Arc::new(RoomManager::new(16));
     let handler = Handler {
-        room_manager: Arc::new(RoomManager::new(16)),
+        room_manager: room_manager.clone(),
     };
     let mut client = Client::builder(&token, intents)
         .event_handler(handler)
         .await
         .expect("Err creating client");
+
+    let manager = room_manager.clone();
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
+
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+
+            let now = Instant::now();
+            if let Err(e) = manager.cleanup(now).await {
+                error!("Error during room cleanup: {:?}", e);
+            }
+        }
+    });
+
+    let manager = room_manager.clone();
+    let http = client.http.clone();
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_mins(1));
+
+        interval.tick().await;
+
+        let timeline_renderer = TimelineRenderer::new();
+        loop {
+            interval.tick().await;
+            for room in manager.get_all_rooms().await {
+                let http = http.clone();
+                let room = room.lock().await;
+                room.channel_id()
+                    .send_message(
+                        http,
+                        CreateMessage::new().embed(timeline_renderer.generate_ongoing_embed(
+                            Instant::now(),
+                            Timestamp::now(),
+                            &room,
+                        )),
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+    });
 
     // Start listening for events by starting a single shard
     if let Err(why) = client.start().await {
@@ -94,50 +139,6 @@ impl EventHandler for Handler {
                 debug!("error joining voice channel: {why:?}");
             }
         }
-
-        let manager = self.room_manager.clone();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
-
-            interval.tick().await;
-
-            loop {
-                interval.tick().await;
-
-                let now = Instant::now();
-                if let Err(e) = manager.cleanup(now).await {
-                    error!("Error during room cleanup: {:?}", e);
-                }
-            }
-        });
-
-        let manager = self.room_manager.clone();
-        let http = ctx.http.clone();
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_mins(1));
-
-            interval.tick().await;
-
-            let timeline_renderer = TimelineRenderer::new();
-            loop {
-                interval.tick().await;
-                for room in manager.get_all_rooms().await {
-                    let http = http.clone();
-                    let room = room.lock().await;
-                    room.channel_id()
-                        .send_message(
-                            http,
-                            CreateMessage::new().embed(timeline_renderer.generate_ongoing_embed(
-                                Instant::now(),
-                                Timestamp::now(),
-                                &room,
-                            )),
-                        )
-                        .await
-                        .unwrap();
-                }
-            }
-        });
     }
 
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
