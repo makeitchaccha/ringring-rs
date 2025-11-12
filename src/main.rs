@@ -1,6 +1,6 @@
 use ringring_rs::model::RoomManager;
 use ringring_rs::service::report::ReportService;
-use serenity::all::{ChannelId, GuildId, Timestamp, VoiceState};
+use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::prelude::*;
@@ -176,106 +176,86 @@ impl EventHandler for Handler {
         let timestamp = Timestamp::now();
         // if newly connected
         if old.is_none() {
-            let flags = (&new).into();
-            let member = match new.member {
-                Some(member) => member,
-                None => {
-                    error!("CRITICAL: newly connected Voice State is missing member.");
-                    return;
-                }
-            };
-            let name = member.display_name().into();
-            let channel_id = match new.channel_id {
-                Some(channel_id) => channel_id,
-                None => {
-                    error!("CRITICAL: newly connected Voice State is missing Channel ID.");
-                    return;
-                }
-            };
-            let guild_id = match new.guild_id {
-                Some(guild_id) => guild_id,
-                None => {
-                    error!("CRITICAL: newly connected Voice State is missing Guild ID.");
-                    return;
-                }
-            };
-            match manager
-                .handle_connect_event(
-                    now,
-                    timestamp,
-                    channel_id,
-                    guild_id,
-                    new.user_id,
-                    name,
-                    member.face(),
-                    flags,
-                )
-                .await{
-                Ok(_) => {},
-                Err(e) => {
-                    error!("Error handling connect event on manager: {:?}", e);
-                }
+            if let Err(err) = handle_connect_safely(&manager, now, timestamp, new).await{
+                error!("Error handling disconnect event on channel: {err}");
             }
             return;
         }
 
         // if just disconnected
         if new.channel_id.is_none() {
-            let old = match old {
-                Some(old) => old,
-                None => {
-                    error!("CRITICAL: Voice State Update is missing both old and new voice channel");
-                    return;
-                }
-            };
-            match manager
-                .handle_disconnect_event(now, old.channel_id.unwrap(), new.user_id)
-                .await {
-                Ok(_) => {},
-                Err(e) => {
-                    error!("Error handling disconnect event on manager: {:?}", e);
-                }
+            if let Err(err) = handle_disconnect_safely(&manager, now, old).await{
+                error!("Error handling disconnect event on channel: {err}");
             }
             return;
         }
 
         // switch channel
-        let old = old.unwrap();
-
-        match manager
-            .handle_disconnect_event(now, old.channel_id.unwrap(), new.user_id)
-            .await {
-            Ok(_) => {},
-            Err(e) => {
-                error!("Error handling disconnect event on manager: {:?}", e);
-            }
+        if let Err(err) = handle_disconnect_safely(&manager, now, old).await{
+            error!("Error handling disconnect event on channel: {err}");
         }
-        let flags = (&new).into();
-        let member = match new.member {
-            Some(member) => member,
-            None => {
-                error!("CRITICAL: Voice State is missing member.");
-                return;
-            }
-        };
-        let name = member.display_name().into();
-        match manager
-            .handle_connect_event(
-                now,
-                timestamp,
-                new.channel_id.unwrap(),
-                new.guild_id.unwrap(),
-                new.user_id,
-                name,
-                member.face(),
-                flags,
-            )
-            .await {
-            Ok(_) => {},
-            Err(e) => {
-                error!("Error handling connect event on manager: {:?}", e);
-            }
+        if let Err(err) = handle_connect_safely(&manager, now, timestamp, new).await{
+            error!("Error handling disconnect event on channel: {err}");
         }
         return;
+    }
+}
+
+async fn handle_connect_safely(manager: &RoomManager, now: Instant, timestamp: Timestamp, new: VoiceState) -> Result<(), String> {
+    let flags = (&new).into();
+    let member = match new.member {
+        Some(member) => member,
+        None => return Err(String::from("Voice State is missing member"))
+    };
+
+    let channel_id = match new.channel_id {
+        Some(channel_id) => channel_id,
+        None => return Err(String::from("Voice State is missing Channel ID"))
+    };
+
+    let guild_id = match new.guild_id {
+        Some(guild_id) => guild_id,
+        None => return Err(String::from("Voice State is missing Guild ID"))
+    };
+    let name = member.display_name().into();
+    match manager
+        .handle_connect_event(
+            now,
+            timestamp,
+            channel_id,
+            guild_id,
+            new.user_id,
+            name,
+            member.face(),
+            flags,
+        )
+        .await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("Error handling connect event on channel: {e:?}")),
+    }
+}
+
+async fn handle_disconnect_safely(manager: &RoomManager, now: Instant, old: Option<VoiceState>) -> Result<(), String>{
+    let old = match old {
+        Some(old) => old,
+        None => {
+            return Err(String::from("Voice State Update is missing old voice channel"))
+        }
+    };
+
+    let channel_id = match old.channel_id {
+        Some(channel_id) => channel_id,
+        None => {
+            return Err(String::from("Voice State Update is missing channel ID"))
+        }
+    };
+
+    match manager
+        .handle_disconnect_event(now, channel_id, old.user_id)
+        .await {
+        Ok(_) => { Ok(())},
+        Err(err) => {
+            Err(format!("Error handling disconnect event on manager: {:?}", err))
+        }
     }
 }
