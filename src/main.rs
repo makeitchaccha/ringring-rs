@@ -99,14 +99,6 @@ struct Handler {
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, ctx: Context, msg: Message) {
-        if msg.content == "!ping" {
-            if let Err(why) = msg.channel_id.say(&ctx.http, "Pong!").await {
-                println!("Error sending message: {why:?}");
-            }
-        }
-    }
-
     async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
         debug!("cache is ready for guilds: {:?}", guilds);
 
@@ -161,6 +153,14 @@ impl EventHandler for Handler {
         while let Some(res) = tasks.join_next().await {
             if let Err(why) = res {
                 debug!("error joining voice channel: {why:?}");
+            }
+        }
+    }
+
+    async fn message(&self, ctx: Context, msg: Message) {
+        if msg.content == "!ping" {
+            if let Err(why) = msg.channel_id.say(&ctx.http, "Pong!").await {
+                println!("Error sending message: {why:?}");
             }
         }
     }
