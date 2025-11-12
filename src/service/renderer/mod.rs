@@ -1,2 +1,2 @@
-mod view;
+pub mod view;
 pub mod timeline;

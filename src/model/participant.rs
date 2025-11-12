@@ -7,14 +7,16 @@ use crate::model::activity::{Activity, ActivityError, ActivityResult, VoiceState
 pub struct Participant{
     user_id: UserId,
     name: String,
+    face: String,
     history: Vec<Activity>
 }
 
 impl Participant {
-    pub fn new(user_id: UserId, name: String) -> Self {
+    pub fn new(user_id: UserId, name: String, face: String) -> Self {
         Participant{
             user_id,
             name,
+            face,
             history: Vec::new(),
         }
     }
@@ -25,6 +27,10 @@ impl Participant {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn face(&self) -> &str {
+        &self.face
     }
 
     pub fn history(&self) -> &Vec<Activity> {

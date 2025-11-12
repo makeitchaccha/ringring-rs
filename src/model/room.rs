@@ -78,7 +78,7 @@ impl Room {
         self.participants.iter_mut().find(|part| part.user_id() == user_id)
     }
 
-    pub fn handle_connect(&mut self, now: Instant, user_id: UserId, name: String, flags: VoiceStateFlags) -> RoomResult<()> {
+    pub fn handle_connect(&mut self, now: Instant, user_id: UserId, name: String, face: String, flags: VoiceStateFlags) -> RoomResult<()> {
         debug!("handle connect");
         if let Some(participant) = self.find_participant_mut(user_id) {
             debug!("participant already exists");
@@ -88,7 +88,7 @@ impl Room {
         }
 
         debug!("newly connected, create participant");
-        let mut participant = Participant::new(user_id, name);
+        let mut participant = Participant::new(user_id, name, face);
         participant.connect(now, flags)?;
         self.participants.push(participant);
         self.expires_at = None;

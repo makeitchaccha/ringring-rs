@@ -59,7 +59,7 @@ impl RoomManager {
         self.shards.get(Self::calculate_shard_index(channel_id, self.num_shards)).unwrap()
     }
 
-    pub async fn handle_connect_event(&self, now: Instant, start: Timestamp, channel_id: ChannelId, guild_id: GuildId, user_id: UserId, name: String, flags: VoiceStateFlags) -> RoomManagerResult<()> {
+    pub async fn handle_connect_event(&self, now: Instant, start: Timestamp, channel_id: ChannelId, guild_id: GuildId, user_id: UserId, name: String, face: String, flags: VoiceStateFlags) -> RoomManagerResult<()> {
         debug!("handle connect event");
         let mut rooms_guard = self.get_shard(channel_id).lock().await;
         let room_guard = rooms_guard.entry(channel_id).or_insert_with(|| {
@@ -68,7 +68,7 @@ impl RoomManager {
         });
 
         let mut room = room_guard.lock().await;
-        room.handle_connect(now, user_id, name, flags)?;
+        room.handle_connect(now, user_id, name, face, flags)?;
         Ok(())
     }
 

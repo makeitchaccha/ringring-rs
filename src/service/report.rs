@@ -1,0 +1,230 @@
+use std::io::{BufReader, Cursor};
+use image::{imageops, ImageFormat, ImageReader};
+use image::imageops::FilterType;
+use kmeans_colors::{get_kmeans, get_kmeans_hamerly, Kmeans, MapColor, Sort};
+use moka::future::Cache;
+use palette::cast::from_component_slice;
+use palette::{FromColor, IntoColor, Lab, Srgba};
+use palette::luma::channels::La;
+use reqwest::{Client};
+use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Http, MessageFlags, Timestamp, UserId};
+use tiny_skia::{Color, Pixmap};
+use tokio::time::Instant;
+use tracing::error;
+use crate::model::{Activity, Room};
+use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
+use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline, TimelineEntry};
+
+#[derive(Debug)]
+pub enum ReportServiceError{
+    GenericError(String),
+    RenderingError(TimelineRendererError),
+}
+
+impl From<TimelineRendererError> for ReportServiceError {
+    fn from(err: TimelineRendererError) -> Self {
+        ReportServiceError::RenderingError(err)
+    }
+}
+
+pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
+
+#[derive(Clone)]
+struct EntryVisual {
+    pub avatar: Pixmap,
+    pub primary_color: Color,
+}
+
+pub struct ReportService {
+    client: Client,
+    cache: Cache<UserId, EntryVisual>,
+    renderer: TimelineRenderer,
+    report_channel_id: ChannelId,
+}
+
+impl ReportService {
+    pub fn new(client: Client, report_channel_id: ChannelId) -> Self {
+        Self{
+            client,
+            cache: Cache::new(100),
+            renderer: TimelineRenderer::new(),
+            report_channel_id,
+        }
+    }
+
+    async fn create_timeline(&self, now: Instant, room: &Room, avatar_size: u32) -> ReportServiceResult<Timeline> {
+        let mut entries = Vec::new();
+        for participant in room.participants() {
+            let entry = self.cache.entry(participant.user_id()).or_try_insert_with::<_, String>(async {
+                let request = match self.client.get(participant.face()).build() {
+                    Ok(request) => request,
+                    Err(err) => {
+                        error!("CRITICAL: failed to build request, use fallback avatar: {:?}", err);
+                        self.client.get("https://cdn.discordapp.com/embed/avatars/0.png").build().expect("failed to build request for default avatar!")
+                    }
+                };
+
+                let response = match self.client.execute(request).await {
+                    Ok(response) => response,
+                    Err(err) => return Err(err.to_string())
+                };
+
+                let avatar_bytes = match response.bytes().await {
+                    Ok(bytes) => bytes,
+                    Err(err) => return Err(err.to_string())
+                };
+
+                let avatar_image = match ImageReader::new(BufReader::new(Cursor::new(avatar_bytes))).with_guessed_format() {
+                    Ok(image) => match image.decode() {
+                        Ok(image) => image,
+                        Err(err) => return Err(err.to_string())
+                    },
+                    Err(err) => {
+                        return Err(err.to_string())
+                    }
+                };
+                let avatar_image = imageops::resize(&avatar_image, avatar_size, avatar_size, FilterType::Lanczos3);
+
+                let primary_color = {
+                    let lab: Vec<Lab> = from_component_slice::<Srgba<u8>>(&avatar_image.to_vec())
+                        .iter()
+                        .map(|x| x.color.into_linear().into_color())
+                        .filter(|x: &Lab| 20.0 < x.l && x.l < 90.0)
+                        .collect();
+
+                    let mut result = Kmeans::new();
+                    for i in 0..5 {
+                        let run_result = get_kmeans(
+                            3,
+                            30,
+                            1.0,
+                            false,
+                            &lab,
+                            i,
+                        );
+                        if run_result.score < result.score {
+                            result = run_result;
+                        }
+                    }
+
+                    let res = Lab::sort_indexed_colors(&result.centroids, &result.indices);
+
+                    let dominant_color = Lab::get_dominant_color(&res);
+
+                    match dominant_color {
+                        Some(color) => {
+                            let color = Srgba::from_color(color);
+                            Color::from_rgba(color.red, color.green, color.blue, color.alpha).unwrap()
+                        },
+                        None => Color::BLACK,
+                    }
+                };
+
+                let mut bytes: Vec<u8> = Vec::new();
+                match avatar_image.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png) {
+                    Ok(_) => {},
+                    Err(err) => {
+                        return Err(err.to_string())
+                    }
+                };
+
+                match Pixmap::decode_png(&bytes) {
+                    Ok(pixmap) => Ok(EntryVisual {
+                        avatar: pixmap,
+                        primary_color,
+                    }),
+                    Err(err) => Err(err.to_string())
+                }
+            }).await;
+
+            let visual = match entry {
+                Ok(entry) => entry.into_value(),
+                Err(err) => return Err(ReportServiceError::GenericError(err.to_string())),
+            };
+
+            entries.push(TimelineEntry{
+                avatar: visual.avatar,
+                sections: convert_to_render_sections(room.created_at(), now, participant.history()),
+                color: visual.primary_color
+            });
+        }
+
+        let timeline = Timeline{
+            start: room.created_at(),
+            end: now,
+            indicator: None,
+            entries
+        };
+
+        Ok(timeline)
+    }
+
+    pub async fn send_room_report(&self, http: &Http, now: Instant, room: &Room) -> ReportServiceResult<()> {
+        let timeline = self.create_timeline(now, room, 64).await?;
+
+        let pixmap = self.renderer.generate_image(&timeline)?;
+        let encoded_image = match pixmap.encode_png() {
+            Ok(b) => b,
+            Err(err) => {
+                return Err(ReportServiceError::GenericError(err.to_string()))
+            }
+        };
+
+
+        match self.report_channel_id
+            .send_message(
+                http,
+                CreateMessage::new()
+                    .embed(self.renderer.generate_ongoing_embed(
+                        now,
+                        Timestamp::now(),
+                        &room,
+                    ))
+                    .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
+                    .add_file(CreateAttachment::bytes(encoded_image, "thumbnail.png")),
+            )
+            .await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(ReportServiceError::GenericError(err.to_string())),
+        }
+    }
+}
+
+fn convert_to_render_sections(start: Instant, end: Instant, history: &Vec<Activity>) -> Vec<RenderSection> {
+    let duration_sec = (end - start).as_secs_f32();
+    let mut render_sections = Vec::new();
+
+    for i in 0..history.len() {
+        let current = &history[i];
+        let fill_style = FillStyle::from_flags(current.flags());
+        let stroke_style = StrokeStyle::from_flags(current.flags());
+
+        let stroke_left_end = if i == 0 {
+            true
+        } else {
+            let prev = &history[i - 1];
+            !current.is_following(prev)
+        };
+
+        let stroke_right_end = if i == history.len() - 1 {
+            true
+        } else {
+            let next = &history[i + 1];
+            !next.is_following(current)
+        };
+
+        let start_ratio = (current.start() - start).as_secs_f32()/duration_sec;
+        let end_ratio = (current.end().unwrap_or(end) - start).as_secs_f32()/duration_sec;
+
+        render_sections.push(RenderSection {
+            start_ratio,
+            end_ratio,
+            fill_style,
+            stroke_style,
+            stroke_left_end,
+            stroke_right_end,
+        })
+    }
+
+    render_sections
+}

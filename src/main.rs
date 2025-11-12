@@ -1,6 +1,6 @@
 use ringring_rs::model::RoomManager;
 use ringring_rs::service::renderer::timeline::TimelineRenderer;
-use serenity::all::{CreateMessage, GuildId, Timestamp, VoiceState};
+use serenity::all::{ChannelId, CreateAttachment, CreateMessage, GuildId, Timestamp, VoiceState};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::prelude::*;
@@ -11,6 +11,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
 use tracing::{debug, error};
+use ringring_rs::service::report::ReportService;
 
 const CLEANUP_INTERVAL_SECS: u64 = 30;
 
@@ -20,6 +21,13 @@ async fn main() {
 
     // Login with a bot token from the environment
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
+
+    let report_channel_id = {
+        let string_id = env::var("REPORT_CHANNEL_ID").expect("Expected a report channel id in the environment");
+        let id = string_id.parse::<u64>().unwrap();
+        ChannelId::new(id)
+    };
+
     // Set gateway intents, which decides what events the bot will be notified about
     let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;
 
@@ -54,27 +62,21 @@ async fn main() {
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_mins(1));
 
+        let reporter = ReportService::new(reqwest::Client::new(), report_channel_id);
         interval.tick().await;
 
         let timeline_renderer = TimelineRenderer::new();
         loop {
             interval.tick().await;
+
             for room in manager.get_all_rooms().await {
                 let http = http.clone();
                 let room = room.lock().await;
-                match room.channel_id()
-                    .send_message(
-                        http,
-                        CreateMessage::new().embed(timeline_renderer.generate_ongoing_embed(
-                            Instant::now(),
-                            Timestamp::now(),
-                            &room,
-                        )),
-                    )
-                    .await {
+                let now = Instant::now();
+                match reporter.send_room_report(&http, now, &room).await{
                     Ok(_) => {},
                     Err(e) => {
-                        error!("Error sending message: {:?}", e);
+                        error!("Error sending room report: {:?}", e);
                     }
                 }
             }
@@ -143,6 +145,7 @@ impl EventHandler for Handler {
                     }
                 };
                 let name = member.display_name().into();
+                let face = member.face();
                 let user_id = user_id.into();
 
                 let manager_for_task = manager.clone();
@@ -150,7 +153,7 @@ impl EventHandler for Handler {
                 let connect_task = async move {
                     manager_for_task
                         .handle_connect_event(
-                            now, timestamp, channel_id, guild_id, user_id, name, flags,
+                            now, timestamp, channel_id, guild_id, user_id, name, face, flags,
                         )
                         .await
                 };
@@ -207,6 +210,7 @@ impl EventHandler for Handler {
                     guild_id,
                     new.user_id,
                     name,
+                    member.face(),
                     flags,
                 )
                 .await{
@@ -240,6 +244,7 @@ impl EventHandler for Handler {
 
         // switch channel
         let old = old.unwrap();
+
         match manager
             .handle_disconnect_event(now, old.channel_id.unwrap(), new.user_id)
             .await {
@@ -249,7 +254,14 @@ impl EventHandler for Handler {
             }
         }
         let flags = (&new).into();
-        let name = new.member.unwrap().display_name().into();
+        let member = match new.member {
+            Some(member) => member,
+            None => {
+                error!("CRITICAL: Voice State is missing member.");
+                return;
+            }
+        };
+        let name = member.display_name().into();
         match manager
             .handle_connect_event(
                 now,
@@ -258,6 +270,7 @@ impl EventHandler for Handler {
                 new.guild_id.unwrap(),
                 new.user_id,
                 name,
+                member.face(),
                 flags,
             )
             .await {

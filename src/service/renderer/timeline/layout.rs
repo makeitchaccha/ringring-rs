@@ -25,6 +25,7 @@ pub struct LayoutConfig {
     pub min_timeline_width: f32,
     pub aspect_ratio_policy: AspectRatioPolicy,
     pub entry_height: f32,
+    pub avatar_size: f32,
 }
 
 impl LayoutConfig {
@@ -40,6 +41,7 @@ impl LayoutConfig {
             timeline_width,
             margin: self.margin,
             entry_height: self.entry_height,
+            avatar_size: self.avatar_size,
         }
     }
 
@@ -56,6 +58,7 @@ pub struct Layout {
     entry_height: f32,
     avatar_column_width: f32,
     timeline_width: f32,
+    avatar_size: f32,
 }
 
 
@@ -66,6 +69,10 @@ impl Layout {
 
     pub fn total_height(&self) -> f32 {
         self.total_height
+    }
+
+    pub fn avatar_size(&self) -> f32 {
+        self.avatar_size
     }
 
     // returns timeline bounding-box for i-th entry.

@@ -2,18 +2,21 @@ mod policy;
 mod layout;
 
 use crate::model::{Activity, Participant, Room};
-use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline};
+use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline, TimelineEntry};
 use chrono::TimeDelta;
 use serenity::all::{
     CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp,
     FormattedTimestampStyle, Mentionable, Timestamp,
 };
-use tiny_skia::{Pixmap, Transform};
+use tiny_skia::{Color, FillRule, FilterQuality, Mask, MaskType, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
 use tokio::time::Instant;
 use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
 use crate::service::renderer::timeline::policy::AspectRatioPolicy;
 
-pub enum TimelineRendererError {}
+#[derive(Debug)]
+pub enum TimelineRendererError {
+    PixelmapCreationError,
+}
 
 pub type TimelineRendererResult<T> = Result<T, TimelineRendererError>;
 
@@ -34,49 +37,10 @@ impl TimelineRenderer {
                 avatar_column_width: 100.0,
                 min_timeline_width: 900.0,
                 entry_height: 70.0,
+                avatar_size: 64.0,
                 aspect_ratio_policy: AspectRatioPolicy::discord_thumbnail_4_3(),
             }
         }
-    }
-
-    fn convert_to_render_sections(now: Instant, start: Instant, end: Instant, history: &Vec<Activity>) -> Vec<RenderSection> {
-
-        let duration_sec = (end - start).as_secs_f32();
-        let mut render_sections = Vec::new();
-
-        for i in 0..history.len() {
-            let current = &history[i];
-            let fill_style = FillStyle::from_flags(current.flags());
-            let stroke_style = StrokeStyle::from_flags(current.flags());
-
-            let stroke_left_end = if i == 0 {
-                true
-            } else {
-                let prev = &history[i - 1];
-                !current.is_following(prev)
-            };
-
-            let stroke_right_end = if i == history.len() - 1 {
-                true
-            } else {
-                let next = &history[i + 1];
-                !next.is_following(current)
-            };
-
-            let start_ratio = (current.start() - start).as_secs_f32()/duration_sec;
-            let end_ratio = (current.end().unwrap_or(now) - start).as_secs_f32()/duration_sec;
-
-            render_sections.push(RenderSection {
-                start_ratio,
-                end_ratio,
-                fill_style,
-                stroke_style,
-                stroke_left_end,
-                stroke_right_end,
-            })
-        }
-
-        render_sections
     }
 
     fn format_time_delta(delta: TimeDelta) -> String {
@@ -103,22 +67,68 @@ impl TimelineRenderer {
             .join("\n")
     }
 
-    pub fn generate_image(&self, timeline: &Timeline) -> TimelineRendererResult<()> {
+    pub fn generate_image(&self, timeline: &Timeline) -> TimelineRendererResult<Pixmap> {
         let n_entries = timeline.entries.len();
         let layout = self.layout_config.calculate(n_entries);
-        let mut pixmap = Pixmap::new(layout.total_width() as u32, layout.total_height() as u32).unwrap();
+
+
+        let path = {
+            let mut path_builder = PathBuilder::new();
+            path_builder.push_circle(layout.avatar_size()/2.0, layout.avatar_size()/2.0, layout.avatar_size()/2.0);
+            path_builder.push_circle(layout.avatar_size()/2.0, layout.avatar_size()/2.0, 0.0);
+            path_builder.finish().unwrap()
+        };
+
+        let avatar_mask = |transform| {
+            let mut avatar_mask = Mask::new(layout.total_width() as u32, layout.total_height() as u32).unwrap();
+            avatar_mask.fill_path(&path, FillRule::EvenOdd, true, transform);
+            avatar_mask
+        };
+
+
+        let mut pixmap = Pixmap::new(layout.total_width() as u32, layout.total_height() as u32)
+            .ok_or(TimelineRendererError::PixelmapCreationError)?;
+        pixmap.fill(Color::WHITE);
+
+        let mut paint = PixmapPaint::default();
+        paint.quality = FilterQuality::Bicubic;
 
         for (i, entry) in timeline.entries.iter().enumerate() {
-            let _headline_bb = layout.headline_bb(i);
+            let headline_bb = layout.headline_bb(i);
+
+            let avatar = entry.avatar.as_ref();
+
+            let center = ((headline_bb.left() + headline_bb.right()) / 2.0, (headline_bb.top() + headline_bb.bottom()) / 2.0);
+            let transform = Transform::from_translate(center.0 - layout.avatar_size()/2.0, center.1 - layout.avatar_size()/2.0);
+
+            let avatar_transform = transform.pre_scale(layout.avatar_size()/avatar.width() as f32, layout.avatar_size()/avatar.height() as f32);
+
+            pixmap.draw_pixmap(0, 0, avatar, &paint, avatar_transform, Some(&avatar_mask(transform)));
+
             let timeline_bb = layout.timeline_bb(i);
             let transformer = Transform::from_bbox(timeline_bb);
 
             for section in &entry.sections {
+                let mut path_builder = PathBuilder::new();
 
+                path_builder.push_rect(Rect::from_ltrb(
+                    section.start_ratio,
+                    5.0/14.0,
+                    section.end_ratio,
+                    9.0/14.0,
+                ).unwrap());
+
+                let path = path_builder.finish().unwrap();
+
+                let mut paint = Paint::default();
+                paint.set_color(entry.color);
+                paint.anti_alias = true;
+
+                pixmap.fill_path(&path, &paint, FillRule::Winding, transformer, None);
             }
         }
 
-        Ok(())
+        Ok(pixmap)
     }
 
     pub fn generate_ongoing_embed(
@@ -154,6 +164,7 @@ impl TimelineRenderer {
                 Self::format_history(now, room.participants()),
                 false,
             )
+            .image("attachment://thumbnail.png")
             .timestamp(timestamp)
             .footer(CreateEmbedFooter::new("ringring-rs v25.11.10"));
 
