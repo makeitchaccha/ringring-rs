@@ -1,17 +1,15 @@
 use ringring_rs::model::RoomManager;
-use ringring_rs::service::renderer::timeline::TimelineRenderer;
-use serenity::all::{ChannelId, CreateAttachment, CreateMessage, GuildId, Timestamp, VoiceState};
+use ringring_rs::service::report::ReportService;
+use serenity::all::{ChannelId, GuildId, Timestamp, VoiceState};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::prelude::*;
 use std::env;
 use std::sync::Arc;
-use serenity::futures::future::err;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
 use tracing::{debug, error};
-use ringring_rs::service::report::ReportService;
 
 const CLEANUP_INTERVAL_SECS: u64 = 30;
 
@@ -65,7 +63,6 @@ async fn main() {
         let reporter = ReportService::new(reqwest::Client::new(), report_channel_id);
         interval.tick().await;
 
-        let timeline_renderer = TimelineRenderer::new();
         loop {
             interval.tick().await;
 
@@ -168,7 +165,7 @@ impl EventHandler for Handler {
         }
     }
 
-    async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
+    async fn voice_state_update(&self, _ctx: Context, old: Option<VoiceState>, new: VoiceState) {
         debug!(
             "voice_state_update: {:?} -> {}",
             old.as_ref().map(|x| format_voice_state_nicely(&x)),

@@ -1,17 +1,17 @@
 mod policy;
 mod layout;
 
-use crate::model::{Activity, Participant, Room};
-use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline, TimelineEntry};
+use crate::model::{Participant, Room};
+use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
+use crate::service::renderer::timeline::policy::AspectRatioPolicy;
+use crate::service::renderer::view::Timeline;
 use chrono::TimeDelta;
 use serenity::all::{
     CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp,
     FormattedTimestampStyle, Mentionable, Timestamp,
 };
-use tiny_skia::{Color, FillRule, FilterQuality, Mask, MaskType, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
+use tiny_skia::{Color, FillRule, FilterQuality, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
 use tokio::time::Instant;
-use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
-use crate::service::renderer::timeline::policy::AspectRatioPolicy;
 
 #[derive(Debug)]
 pub enum TimelineRendererError {

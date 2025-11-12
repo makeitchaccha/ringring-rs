@@ -1,11 +1,10 @@
 use std::io::{BufReader, Cursor};
 use image::{imageops, ImageFormat, ImageReader};
 use image::imageops::FilterType;
-use kmeans_colors::{get_kmeans, get_kmeans_hamerly, Kmeans, MapColor, Sort};
+use kmeans_colors::{get_kmeans, Kmeans, MapColor, Sort};
 use moka::future::Cache;
 use palette::cast::from_component_slice;
 use palette::{FromColor, IntoColor, Lab, Srgba};
-use palette::luma::channels::La;
 use reqwest::{Client};
 use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Http, MessageFlags, Timestamp, UserId};
 use tiny_skia::{Color, Pixmap};

@@ -1,4 +1,3 @@
-use std::time::SystemTime;
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId};
 use tokio::time::Instant;
 use tracing::debug;
