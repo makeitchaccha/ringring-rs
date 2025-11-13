@@ -1,5 +1,5 @@
 use ringring_rs::model::RoomManager;
-use ringring_rs::service::report::ReportService;
+use ringring_rs::service::report::{ReportService, RoomDTO};
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
 use serenity::async_trait;
 use serenity::model::channel::Message;
@@ -68,9 +68,12 @@ async fn main() {
 
             for room in manager.get_all_rooms().await {
                 let http = http.clone();
-                let room = room.lock().await;
+                let room_dto = {
+                    let room = room.lock().await;
+                    RoomDTO::from_room(&room)
+                };
                 let now = Instant::now();
-                match reporter.send_room_report(&http, now, &room).await{
+                match reporter.send_room_report(&http, now, &room_dto).await{
                     Ok(_) => {},
                     Err(e) => {
                         error!("Error sending room report: {:?}", e);

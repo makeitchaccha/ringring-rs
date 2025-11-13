@@ -1,4 +1,5 @@
 use std::io::{BufReader, Cursor};
+use std::sync::Arc;
 use image::{imageops, ImageFormat, ImageReader};
 use image::imageops::FilterType;
 use kmeans_colors::{get_kmeans, Kmeans, MapColor, Sort};
@@ -10,7 +11,7 @@ use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Http, MessageFla
 use tiny_skia::{Color, Pixmap};
 use tokio::time::Instant;
 use tracing::error;
-use crate::model::{Activity, Room};
+use crate::model::{Activity, Participant, Room};
 use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
 use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline, TimelineEntry};
 
@@ -37,8 +38,44 @@ struct EntryVisual {
 pub struct ReportService {
     client: Client,
     cache: Cache<UserId, EntryVisual>,
-    renderer: TimelineRenderer,
+    renderer: Arc<TimelineRenderer>,
     report_channel_id: ChannelId,
+}
+
+#[derive(Debug, Clone)]
+pub struct RoomDTO {
+    pub created_at: Instant,
+    pub timestamp: Timestamp,
+    pub channel_id: ChannelId,
+    pub participants: Vec<ParticipantDTO>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParticipantDTO {
+    pub user_id: UserId,
+    pub name: String,
+    pub face: String,
+    pub history: Vec<Activity>
+}
+
+impl RoomDTO {
+    pub fn from_room(room: &Room) -> Self {
+        let participants = room.participants().iter().map(|p| {
+            ParticipantDTO {
+                user_id: p.user_id(),
+                name: p.name().to_string(),
+                face: p.face().to_string(),
+                history: p.history().clone(),
+            }
+        }).collect();
+
+        RoomDTO {
+            created_at: room.created_at(),
+            timestamp: room.timestamp(),
+            channel_id: room.channel_id(),
+            participants,
+        }
+    }
 }
 
 impl ReportService {
@@ -46,16 +83,16 @@ impl ReportService {
         Self{
             client,
             cache: Cache::new(100),
-            renderer: TimelineRenderer::new(),
+            renderer: Arc::new(TimelineRenderer::new()),
             report_channel_id,
         }
     }
 
-    async fn create_timeline(&self, now: Instant, room: &Room, avatar_size: u32) -> ReportServiceResult<Timeline> {
+    async fn create_timeline(&self, now: Instant, room: &RoomDTO, avatar_size: u32) -> ReportServiceResult<Timeline> {
         let mut entries = Vec::new();
-        for participant in room.participants() {
-            let entry = self.cache.entry(participant.user_id()).or_try_insert_with::<_, String>(async {
-                let request = match self.client.get(participant.face()).build() {
+        for participant in &room.participants {
+            let entry = self.cache.entry(participant.user_id).or_try_insert_with::<_, String>(async {
+                let request = match self.client.get(&participant.face).build() {
                     Ok(request) => request,
                     Err(err) => {
                         error!("CRITICAL: failed to build request, use fallback avatar: {:?}", err);
@@ -143,13 +180,13 @@ impl ReportService {
 
             entries.push(TimelineEntry{
                 avatar: visual.avatar,
-                sections: convert_to_render_sections(room.created_at(), now, participant.history()),
+                sections: convert_to_render_sections(room.created_at, now, &participant.history),
                 color: visual.primary_color
             });
         }
 
         let timeline = Timeline{
-            start: room.created_at(),
+            start: room.created_at,
             end: now,
             indicator: None,
             entries
@@ -158,15 +195,25 @@ impl ReportService {
         Ok(timeline)
     }
 
-    pub async fn send_room_report(&self, http: &Http, now: Instant, room: &Room) -> ReportServiceResult<()> {
+    pub async fn send_room_report(&self, http: &Http, now: Instant, room: &RoomDTO) -> ReportServiceResult<()> {
         let timeline = self.create_timeline(now, room, 64).await?;
 
-        let pixmap = self.renderer.generate_image(&timeline)?;
-        let encoded_image = match pixmap.encode_png() {
-            Ok(b) => b,
-            Err(err) => {
-                return Err(ReportServiceError::GenericError(err.to_string()))
-            }
+        let renderer = self.renderer.clone();
+
+        let task = tokio::task::spawn_blocking(move || {
+            let pixmap = renderer.generate_image(&timeline)?;
+            let encoded_image = match pixmap.encode_png() {
+                Ok(b) => b,
+                Err(err) => {
+                    return Err(ReportServiceError::GenericError(err.to_string()))
+                }
+            };
+            Ok(encoded_image)
+        });
+
+        let encoded_image = match task.await {
+            Ok(image) => image?,
+            Err(err) => return Err(ReportServiceError::GenericError(err.to_string()))
         };
 
 
@@ -177,7 +224,7 @@ impl ReportService {
                     .embed(self.renderer.generate_ongoing_embed(
                         now,
                         Timestamp::now(),
-                        &room,
+                        room,
                     ))
                     .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
                     .add_file(CreateAttachment::bytes(encoded_image, "thumbnail.png")),

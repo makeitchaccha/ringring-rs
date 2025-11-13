@@ -12,6 +12,7 @@ use serenity::all::{
 };
 use tiny_skia::{Color, FillRule, FilterQuality, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
 use tokio::time::Instant;
+use crate::service::report::{ParticipantDTO, RoomDTO};
 
 #[derive(Debug)]
 pub enum TimelineRendererError {
@@ -70,7 +71,6 @@ impl TimelineRenderer {
     pub fn generate_image(&self, timeline: &Timeline) -> TimelineRendererResult<Pixmap> {
         let n_entries = timeline.entries.len();
         let layout = self.layout_config.calculate(n_entries);
-
 
         let path = {
             let mut path_builder = PathBuilder::new();
@@ -135,20 +135,20 @@ impl TimelineRenderer {
         &self,
         now: Instant,
         timestamp: Timestamp,
-        room: &Room,
+        room: &RoomDTO,
     ) -> CreateEmbed {
-        let elapsed = TimeDelta::from_std(now - room.created_at()).unwrap();
+        let elapsed = TimeDelta::from_std(now - room.created_at).unwrap();
 
         let builder = CreateEmbed::new()
             .author(CreateEmbedAuthor::new("ringring-rs"))
             .title("On call")
-            .description(format!("Room is active on {}", room.channel_id().mention()))
+            .description(format!("Room is active on {}", room.channel_id.mention()))
             .field(
                 "start",
                 format!(
                     "{}",
                     FormattedTimestamp::new(
-                        room.timestamp(),
+                        room.timestamp,
                         Some(FormattedTimestampStyle::ShortTime)
                     )
                 ),
@@ -159,11 +159,11 @@ impl TimelineRenderer {
                 format!("{}", Self::format_time_delta(elapsed)),
                 true,
             )
-            .field(
-                "history",
-                Self::format_history(now, room.participants()),
-                false,
-            )
+            // .field(
+            //     "history",
+            //     Self::format_history(now, room.participants),
+            //     false,
+            // )
             .image("attachment://thumbnail.png")
             .timestamp(timestamp)
             .footer(CreateEmbedFooter::new("ringring-rs v25.11.10"));

@@ -11,7 +11,7 @@ pub enum ActivityError {
 
 pub type ActivityResult<T> = Result<T, ActivityError>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Activity {
     start: Instant,
     end: Option<Instant>,
