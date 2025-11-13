@@ -3,15 +3,14 @@ use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError
 use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline, TimelineEntry};
 use image::imageops::FilterType;
 use image::{imageops, ImageFormat, ImageReader};
-use kmeans_colors::{get_kmeans, Kmeans, MapColor, Sort};
+use kmeans_colors::{get_kmeans, Kmeans, Sort};
 use moka::future::Cache;
 use palette::cast::from_component_slice;
-use palette::{FromColor, IntoColor, Lab, Laba, Srgba};
+use palette::{FromColor, IntoColor, Lab, Srgba};
 use reqwest::Client;
 use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Http, MessageFlags, Timestamp, UserId};
 use std::io::{BufReader, Cursor};
 use std::sync::Arc;
-use image::codecs::avif::ColorSpace::Srgb;
 use tiny_skia::{Color, Pixmap};
 use tokio::time::Instant;
 use tracing::error;

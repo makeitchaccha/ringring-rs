@@ -1,6 +1,6 @@
 use ringring_rs::model::RoomManager;
 use ringring_rs::service::report::{ReportService, RoomDTO};
-use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
+use serenity::all::{ChannelId, GuildId, Timestamp, VoiceState};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::prelude::*;
