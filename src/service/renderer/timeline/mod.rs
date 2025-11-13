@@ -4,15 +4,27 @@ mod layout;
 use crate::model::Participant;
 use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
 use crate::service::renderer::timeline::policy::AspectRatioPolicy;
-use crate::service::renderer::view::Timeline;
+use crate::service::renderer::view::{FillStyle, Timeline};
 use crate::service::report::RoomDTO;
 use chrono::TimeDelta;
 use serenity::all::{
     CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp,
     FormattedTimestampStyle, Mentionable, Timestamp,
 };
-use tiny_skia::{Color, FillRule, FilterQuality, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
+use tiny_skia::{Color, FillRule, FilterQuality, LineCap, Mask, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint, Rect, Shader, SpreadMode, Stroke, Transform};
 use tokio::time::Instant;
+
+const TIMELINE_BAR_HEIGHT_RATIO: f32 = 4.0 / 7.0;
+const TIMELINE_BAR_TOP_RATIO: f32 = 5.0 / 14.0;
+
+const TIMELINE_BAR_BOTTOM_RATIO: f32 = TIMELINE_BAR_TOP_RATIO + TIMELINE_BAR_HEIGHT_RATIO;
+
+const STREAMING_STROKE_WIDTH: f32 = 3.0;
+
+const DEAFENED_ALPHA: f32 = 0.3;
+const MUTED_HATCH_SIZE: u32 = 10;
+const MUTED_HATCH_LINE_WIDTH: f32 = 3.0;
+const MUTED_HATCH_COLOR_ALPHA: f32 = 0.8;
 
 #[derive(Debug)]
 pub enum TimelineRendererError {
@@ -108,25 +120,29 @@ impl TimelineRenderer {
             let timeline_bb = layout.timeline_bb(i);
             let transformer = Transform::from_bbox(timeline_bb);
 
+            let hatching_pixmap = create_hatching_pattern(entry.color);
+            let hatching_shader = Pattern::new(hatching_pixmap.as_ref(), SpreadMode::Repeat, FilterQuality::Bicubic, 1.0, Transform::identity());
+            let solid_shader = Shader::SolidColor(entry.color);
             for section in &entry.sections {
-
-
                 let path = {
                     let mut path_builder = PathBuilder::new();
                     path_builder.push_rect(Rect::from_ltrb(
                         section.start_ratio,
-                        5.0/14.0,
+                        TIMELINE_BAR_TOP_RATIO,
                         section.end_ratio,
-                        9.0/14.0,
-                    ).unwrap());
+                        TIMELINE_BAR_BOTTOM_RATIO,
+                    ).unwrap().transform(transformer).unwrap());
                     path_builder.finish().unwrap()
                 };
 
                 let mut paint = Paint::default();
-                paint.set_color(entry.color);
                 paint.anti_alias = true;
+                paint.shader = match section.fill_style {
+                    FillStyle::Active => solid_shader.clone(),
+                    _ => hatching_shader.clone(),
+                };
 
-                pixmap.fill_path(&path, &paint, FillRule::Winding, transformer, None);
+                pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
             }
         }
 
@@ -172,4 +188,43 @@ impl TimelineRenderer {
 
         builder
     }
+}
+
+fn create_hatching_pattern(color: Color) -> Pixmap {
+    let size = MUTED_HATCH_SIZE;
+    let mut pixmap = Pixmap::new(size, size).unwrap();
+    pixmap.fill(Color::from_rgba8(0, 0, 0, 0)); // 背景は透明
+
+    let mut path_builder = PathBuilder::new();
+
+    const fn overdrive(x: f32) -> f32 {
+        x + MUTED_HATCH_LINE_WIDTH
+    }
+
+    // crossline
+    path_builder.move_to(-overdrive(0.0), overdrive(size as f32));
+    path_builder.line_to(overdrive(size as f32), -overdrive(0.0));
+
+    // upper
+    path_builder.move_to(-overdrive(0.0), overdrive(0.0));
+    path_builder.line_to(overdrive(0.0), -overdrive(0.0));
+
+    // lower
+    path_builder.move_to(-overdrive(size as f32), overdrive(size as f32));
+    path_builder.line_to(overdrive(size as f32), -overdrive(size as f32));
+
+    let path = path_builder.finish().unwrap();
+
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    let hatch_color = Color::from_rgba(color.red(), color.green(), color.blue(), MUTED_HATCH_COLOR_ALPHA).unwrap();
+    paint.set_color(hatch_color);
+
+    let mut stroke = Stroke::default();
+    stroke.width = MUTED_HATCH_LINE_WIDTH;
+    stroke.line_cap = LineCap::Square;
+
+    pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+
+    pixmap
 }
