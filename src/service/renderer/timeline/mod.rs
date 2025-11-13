@@ -125,9 +125,13 @@ impl TimelineRenderer {
             let hatching_shader = Pattern::new(hatching_pixmap.as_ref(), SpreadMode::Repeat, FilterQuality::Bicubic, 1.0, Transform::identity());
             let solid_shader = Shader::SolidColor(entry.fill_color);
             for section in &entry.sections {
-                if section.fill_style == FillStyle::Deafened {
-                    continue;
-                }
+                let mut paint = Paint::default();
+                paint.anti_alias = true;
+                paint.shader = match section.fill_style {
+                    FillStyle::Active => solid_shader.clone(),
+                    FillStyle::Muted => hatching_shader.clone(),
+                    FillStyle::Deafened => { continue }, // skips rendering strokes.
+                };
 
                 let path = {
                     let mut path_builder = PathBuilder::new();
@@ -138,14 +142,6 @@ impl TimelineRenderer {
                         TIMELINE_BAR_BOTTOM_RATIO,
                     ).unwrap().transform(transformer).unwrap());
                     path_builder.finish().unwrap()
-                };
-
-                let mut paint = Paint::default();
-                paint.anti_alias = true;
-                paint.shader = match section.fill_style {
-                    FillStyle::Active => solid_shader.clone(),
-                    FillStyle::Muted => hatching_shader.clone(),
-                    FillStyle::Deafened => unreachable!(),
                 };
 
                 pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
