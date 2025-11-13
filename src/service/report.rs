@@ -97,67 +97,76 @@ impl ReportService {
                     Err(err) => return Err(err.to_string())
                 };
 
-                let avatar_image = match ImageReader::new(BufReader::new(Cursor::new(avatar_bytes))).with_guessed_format() {
-                    Ok(image) => match image.decode() {
-                        Ok(image) => image,
-                        Err(err) => return Err(err.to_string())
-                    },
-                    Err(err) => {
-                        return Err(err.to_string())
-                    }
-                };
-                let avatar_image = imageops::resize(&avatar_image, avatar_size, avatar_size, FilterType::Lanczos3);
-
-                let primary_color = {
-                    let lab: Vec<Lab> = from_component_slice::<Srgba<u8>>(&avatar_image.to_vec())
-                        .iter()
-                        .map(|x| x.color.into_linear().into_color())
-                        .filter(|x: &Lab| 20.0 < x.l && x.l < 90.0)
-                        .collect();
-
-                    let mut result = Kmeans::new();
-                    for i in 0..5 {
-                        let run_result = get_kmeans(
-                            3,
-                            30,
-                            1.0,
-                            false,
-                            &lab,
-                            i,
-                        );
-                        if run_result.score < result.score {
-                            result = run_result;
-                        }
-                    }
-
-                    let res = Lab::sort_indexed_colors(&result.centroids, &result.indices);
-
-                    let dominant_color = Lab::get_dominant_color(&res);
-
-                    match dominant_color {
-                        Some(color) => {
-                            let color = Srgba::from_color(color);
-                            Color::from_rgba(color.red, color.green, color.blue, color.alpha).unwrap()
+                let task = tokio::task::spawn_blocking(move || {
+                    let avatar_image = match ImageReader::new(BufReader::new(Cursor::new(avatar_bytes))).with_guessed_format() {
+                        Ok(image) => match image.decode() {
+                            Ok(image) => image,
+                            Err(err) => return Err(err.to_string())
                         },
-                        None => Color::BLACK,
+                        Err(err) => {
+                            return Err(err.to_string())
+                        }
+                    };
+                    let avatar_image = imageops::resize(&avatar_image, avatar_size, avatar_size, FilterType::Lanczos3);
+
+                    let primary_color = {
+                        let lab: Vec<Lab> = from_component_slice::<Srgba<u8>>(&avatar_image.to_vec())
+                            .iter()
+                            .map(|x| x.color.into_linear().into_color())
+                            .filter(|x: &Lab| 20.0 < x.l && x.l < 90.0)
+                            .collect();
+
+                        let mut result = Kmeans::new();
+                        for i in 0..5 {
+                            let run_result = get_kmeans(
+                                3,
+                                30,
+                                1.0,
+                                false,
+                                &lab,
+                                i,
+                            );
+                            if run_result.score < result.score {
+                                result = run_result;
+                            }
+                        }
+
+                        let res = Lab::sort_indexed_colors(&result.centroids, &result.indices);
+
+                        let dominant_color = Lab::get_dominant_color(&res);
+
+                        match dominant_color {
+                            Some(color) => {
+                                let color = Srgba::from_color(color);
+                                Color::from_rgba(color.red, color.green, color.blue, color.alpha).unwrap()
+                            },
+                            None => Color::BLACK,
+                        }
+                    };
+
+                    let mut bytes: Vec<u8> = Vec::new();
+                    match avatar_image.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png) {
+                        Ok(_) => {},
+                        Err(err) => {
+                            return Err(err.to_string())
+                        }
+                    };
+
+                    match Pixmap::decode_png(&bytes) {
+                        Ok(pixmap) => Ok(EntryVisual {
+                            avatar: pixmap,
+                            primary_color,
+                        }),
+                        Err(err) => Err(err.to_string())
                     }
+                });
+
+                let pixmap = match task.await {
+                    Ok(pixmap) => pixmap,
+                    Err(err) => return Err(err.to_string())
                 };
 
-                let mut bytes: Vec<u8> = Vec::new();
-                match avatar_image.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png) {
-                    Ok(_) => {},
-                    Err(err) => {
-                        return Err(err.to_string())
-                    }
-                };
-
-                match Pixmap::decode_png(&bytes) {
-                    Ok(pixmap) => Ok(EntryVisual {
-                        avatar: pixmap,
-                        primary_color,
-                    }),
-                    Err(err) => Err(err.to_string())
-                }
+                pixmap
             }).await;
 
             let visual = match entry {
