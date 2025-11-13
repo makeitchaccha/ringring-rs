@@ -20,7 +20,7 @@ const TIMELINE_BAR_TOP_RATIO: f32 = 3.0 / 14.0;
 const TIMELINE_BAR_BOTTOM_RATIO: f32 = TIMELINE_BAR_TOP_RATIO + TIMELINE_BAR_HEIGHT_RATIO;
 
 const STROKE_WIDTH: f32 = 2.0;
-const STREAMING_STROKE_WIDTH: f32 = 3.0;
+const STREAMING_STROKE_WIDTH: f32 = 5.0;
 
 const HATCH_SIZE: u32 = 10;
 const HATCH_LINE_WIDTH: f32 = 3.0;
@@ -171,6 +171,7 @@ impl TimelineRenderer {
                 };
 
                 let mut stroke = Stroke::default();
+                stroke.line_cap = LineCap::Round;
                 stroke.width = match section.stroke_style {
                     StrokeStyle::Default => STROKE_WIDTH,
                     StrokeStyle::Streaming => STREAMING_STROKE_WIDTH,
@@ -267,7 +268,7 @@ fn create_hatching_pattern(color: Color) -> Pixmap {
 
     let mut stroke = Stroke::default();
     stroke.width = HATCH_LINE_WIDTH;
-    stroke.line_cap = LineCap::Square;
+    stroke.line_cap = LineCap::Butt;
 
     pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 
