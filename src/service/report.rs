@@ -1,6 +1,6 @@
 use crate::model::{Activity, Participant, Room};
 use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
-use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline, TimelineEntry};
+use crate::service::renderer::view::{FillStyle, RenderSection, StreamingSection, Timeline, TimelineEntry};
 use image::imageops::FilterType;
 use image::{imageops, ImageFormat, ImageReader};
 use kmeans_colors::{get_kmeans, Kmeans, Sort};
@@ -186,6 +186,7 @@ impl ReportService {
             entries.push(TimelineEntry{
                 avatar: visual.avatar,
                 sections: convert_to_render_sections(room.created_at, now, participant.history()),
+                streaming_sections: convert_to_streaming_sections(room.created_at, now, participant.history()),
                 fill_color: visual.fill_color,
                 stroke_color: visual.stroke_color,
             });
@@ -249,29 +250,6 @@ fn convert_to_render_sections(start: Instant, end: Instant, history: &Vec<Activi
     for i in 0..history.len() {
         let current = &history[i];
         let fill_style = FillStyle::from_flags(current.flags());
-        let stroke_style = StrokeStyle::from_flags(current.flags());
-
-        let stroke_left_end = if i == 0 {
-            true
-        } else {
-            let prev = &history[i - 1];
-            if !current.is_following(prev) {
-                true
-            } else {
-                !prev.flags().is_sharing_screen && current.flags().is_sharing_screen
-            }
-        };
-
-        let stroke_right_end = if i == history.len() - 1 {
-            true
-        } else {
-            let next = &history[i + 1];
-            if !next.is_following(current) {
-                true
-            } else {
-                current.flags().is_sharing_screen && !next.flags().is_sharing_screen
-            }
-        };
 
         let start_ratio = (current.start() - start).as_secs_f32()/duration_sec;
         let end_ratio = (current.end().unwrap_or(end) - start).as_secs_f32()/duration_sec;
@@ -280,11 +258,64 @@ fn convert_to_render_sections(start: Instant, end: Instant, history: &Vec<Activi
             start_ratio,
             end_ratio,
             fill_style,
-            stroke_style,
-            stroke_left_end,
-            stroke_right_end,
         })
     }
 
     render_sections
+}
+
+fn convert_to_streaming_sections(start: Instant, end: Instant, history: &Vec<Activity>) -> Vec<StreamingSection> {
+    let duration_sec = (end - start).as_secs_f32();
+    let mut streaming_sections = Vec::new();
+
+    // Always keep streaming start activity.
+    let mut streaming_start_activity: Option<&Activity> = None;
+
+    for i in 0..history.len() {
+        let current_activity = &history[i];
+
+        // update current streaming start
+        match streaming_start_activity {
+            Some(streaming_start) => {
+                if !current_activity.flags().is_sharing_screen {
+                    let start_ratio = (streaming_start.start() - start).as_secs_f32()/duration_sec;
+                    let end_ratio = (current_activity.start() - start).as_secs_f32()/duration_sec;
+
+                    streaming_sections.push(StreamingSection{
+                        start_ratio,
+                        end_ratio,
+                    });
+
+                    streaming_start_activity = None;
+                }
+            },
+            None => {
+                if current_activity.flags().is_sharing_screen {
+                    streaming_start_activity = Some(&history[i]);
+                }
+            }
+        }
+
+        // detect disconnection from voice channel
+        if let Some(streaming_start) = &streaming_start_activity {
+            let terminated = if i == history.len() - 1 {
+                true
+            } else {
+                !history[i+1].is_following(current_activity)
+            };
+
+            if terminated {
+                let start_ratio = (streaming_start.start() - start).as_secs_f32()/duration_sec;
+                let end_ratio = (current_activity.end().unwrap_or(end) - start).as_secs_f32()/duration_sec;
+
+                streaming_sections.push(StreamingSection{
+                    start_ratio,
+                    end_ratio,
+                });
+                streaming_start_activity = None;
+            }
+        }
+    }
+
+    streaming_sections
 }

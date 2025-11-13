@@ -4,7 +4,7 @@ mod layout;
 use crate::model::Participant;
 use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
 use crate::service::renderer::timeline::policy::AspectRatioPolicy;
-use crate::service::renderer::view::{FillStyle, StrokeStyle, Timeline};
+use crate::service::renderer::view::{FillStyle, Timeline};
 use crate::service::report::RoomDTO;
 use chrono::TimeDelta;
 use serenity::all::{
@@ -125,6 +125,10 @@ impl TimelineRenderer {
             let hatching_shader = Pattern::new(hatching_pixmap.as_ref(), SpreadMode::Repeat, FilterQuality::Bicubic, 1.0, Transform::identity());
             let solid_shader = Shader::SolidColor(entry.fill_color);
             for section in &entry.sections {
+                if section.fill_style == FillStyle::Deafened {
+                    continue;
+                }
+
                 let path = {
                     let mut path_builder = PathBuilder::new();
                     path_builder.push_rect(Rect::from_ltrb(
@@ -140,49 +144,50 @@ impl TimelineRenderer {
                 paint.anti_alias = true;
                 paint.shader = match section.fill_style {
                     FillStyle::Active => solid_shader.clone(),
-                    _ => hatching_shader.clone(),
+                    FillStyle::Muted => hatching_shader.clone(),
+                    FillStyle::Deafened => unreachable!(),
                 };
 
                 pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
             }
 
-            // strokes later: they may overlap the previous rendered fills.
+
+            let mut stroke = Stroke::default();
+            stroke.line_cap = LineCap::Round;
+            stroke.width = STROKE_WIDTH;
+
+            let mut paint = Paint::default();
+            paint.anti_alias = true;
+            paint.set_color(entry.fill_color);
+
+            // normal strokes later: they may overlap the previous rendered fills.
             for section in &entry.sections {
                 let path = {
                     let mut path_builder = PathBuilder::new();
-
-                    // parallel horizontal lines.
-                    path_builder.move_to(section.start_ratio, TIMELINE_BAR_TOP_RATIO);
-                    path_builder.line_to(section.end_ratio, TIMELINE_BAR_TOP_RATIO);
-                    path_builder.move_to(section.start_ratio, TIMELINE_BAR_BOTTOM_RATIO);
-                    path_builder.line_to(section.end_ratio, TIMELINE_BAR_BOTTOM_RATIO);
-
-                    if section.stroke_left_end {
-                        path_builder.move_to(section.start_ratio, TIMELINE_BAR_TOP_RATIO);
-                        path_builder.line_to(section.start_ratio, TIMELINE_BAR_BOTTOM_RATIO);
-                    }
-
-                    if section.stroke_right_end {
-                        path_builder.move_to(section.end_ratio, TIMELINE_BAR_TOP_RATIO);
-                        path_builder.line_to(section.end_ratio, TIMELINE_BAR_BOTTOM_RATIO);
-                    }
+                    path_builder.push_rect(Rect::from_ltrb(section.start_ratio, TIMELINE_BAR_TOP_RATIO, section.end_ratio, TIMELINE_BAR_BOTTOM_RATIO).unwrap());
 
                     path_builder.finish().unwrap().transform(transformer).unwrap()
                 };
 
-                let mut stroke = Stroke::default();
-                stroke.line_cap = LineCap::Round;
-                stroke.width = match section.stroke_style {
-                    StrokeStyle::Default => STROKE_WIDTH,
-                    StrokeStyle::Streaming => STREAMING_STROKE_WIDTH,
-                };
+                pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            }
 
-                let mut paint = Paint::default();
-                paint.anti_alias = true;
-                paint.set_color(match section.stroke_style {
-                    StrokeStyle::Default => entry.fill_color,
-                    StrokeStyle::Streaming => Color::from_rgba(0.6, 0.3, 0.3, 1.0).unwrap(),
-                });
+            let mut stroke = Stroke::default();
+            stroke.line_cap = LineCap::Round;
+            stroke.width = STREAMING_STROKE_WIDTH;
+
+            let mut paint = Paint::default();
+            paint.anti_alias = true;
+            paint.set_color(Color::from_rgba(1.0, 0.4, 0.4, 1.0).unwrap());
+
+            // finally, streaming strokes
+            for section in &entry.streaming_sections {
+                let path = {
+                    let mut path_builder = PathBuilder::new();
+                    path_builder.push_rect(Rect::from_ltrb(section.start_ratio, TIMELINE_BAR_TOP_RATIO, section.end_ratio, TIMELINE_BAR_BOTTOM_RATIO).unwrap());
+
+                    path_builder.finish().unwrap().transform(transformer).unwrap()
+                };
 
                 pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
             }
