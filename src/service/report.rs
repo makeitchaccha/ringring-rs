@@ -6,11 +6,12 @@ use image::{imageops, ImageFormat, ImageReader};
 use kmeans_colors::{get_kmeans, Kmeans, MapColor, Sort};
 use moka::future::Cache;
 use palette::cast::from_component_slice;
-use palette::{FromColor, IntoColor, Lab, Srgba};
+use palette::{FromColor, IntoColor, Lab, Laba, Srgba};
 use reqwest::Client;
 use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Http, MessageFlags, Timestamp, UserId};
 use std::io::{BufReader, Cursor};
 use std::sync::Arc;
+use image::codecs::avif::ColorSpace::Srgb;
 use tiny_skia::{Color, Pixmap};
 use tokio::time::Instant;
 use tracing::error;
@@ -32,7 +33,8 @@ pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
 #[derive(Clone)]
 struct EntryVisual {
     pub avatar: Pixmap,
-    pub primary_color: Color,
+    pub fill_color: Color,
+    pub stroke_color: Color,
 }
 
 pub struct ReportService {
@@ -109,7 +111,7 @@ impl ReportService {
                     };
                     let avatar_image = imageops::resize(&avatar_image, avatar_size, avatar_size, FilterType::Lanczos3);
 
-                    let primary_color = {
+                    let fill_color = {
                         let lab: Vec<Lab> = from_component_slice::<Srgba<u8>>(&avatar_image.to_vec())
                             .iter()
                             .map(|x| x.color.into_linear().into_color())
@@ -152,10 +154,18 @@ impl ReportService {
                         }
                     };
 
+                    let stroke_color = {
+                        let mut color_lab: Lab = Srgba::new(fill_color.red(), fill_color.green(), fill_color.blue(), fill_color.alpha()).into_color();
+                        color_lab.l *= 0.8;
+                        let color: Srgba = color_lab.into_color();
+                        Color::from_rgba(color.red, color.green, color.blue, color.alpha).unwrap()
+                    };
+
                     match Pixmap::decode_png(&bytes) {
                         Ok(pixmap) => Ok(EntryVisual {
                             avatar: pixmap,
-                            primary_color,
+                            fill_color,
+                            stroke_color
                         }),
                         Err(err) => Err(err.to_string())
                     }
@@ -177,7 +187,7 @@ impl ReportService {
             entries.push(TimelineEntry{
                 avatar: visual.avatar,
                 sections: convert_to_render_sections(room.created_at, now, participant.history()),
-                color: visual.primary_color
+                color: visual.fill_color
             });
         }
 

@@ -23,7 +23,7 @@ const STREAMING_STROKE_WIDTH: f32 = 3.0;
 
 const DEAFENED_ALPHA: f32 = 0.3;
 const MUTED_HATCH_SIZE: u32 = 10;
-const MUTED_HATCH_LINE_WIDTH: f32 = 3.0;
+const HATCH_LINE_WIDTH: f32 = 3.0;
 const MUTED_HATCH_COLOR_ALPHA: f32 = 0.8;
 
 #[derive(Debug)]
@@ -197,21 +197,25 @@ fn create_hatching_pattern(color: Color) -> Pixmap {
 
     let mut path_builder = PathBuilder::new();
 
-    const fn overdrive(x: f32) -> f32 {
-        x + MUTED_HATCH_LINE_WIDTH
+    const fn over(x: f32) -> f32 {
+        x + HATCH_LINE_WIDTH
+    }
+
+    const fn under(x: f32) -> f32 {
+        x - HATCH_LINE_WIDTH
     }
 
     // crossline
-    path_builder.move_to(-overdrive(0.0), overdrive(size as f32));
-    path_builder.line_to(overdrive(size as f32), -overdrive(0.0));
+    path_builder.move_to(under(0.0), over(size as f32));
+    path_builder.line_to(over(size as f32), under(0.0));
 
     // upper
-    path_builder.move_to(-overdrive(0.0), overdrive(0.0));
-    path_builder.line_to(overdrive(0.0), -overdrive(0.0));
+    path_builder.move_to(under(0.0), over(0.0));
+    path_builder.line_to(over(0.0), under(0.0));
 
     // lower
-    path_builder.move_to(-overdrive(size as f32), overdrive(size as f32));
-    path_builder.line_to(overdrive(size as f32), -overdrive(size as f32));
+    path_builder.move_to(under(size as f32), over(size as f32));
+    path_builder.line_to(over(size as f32), under(size as f32));
 
     let path = path_builder.finish().unwrap();
 
@@ -221,7 +225,7 @@ fn create_hatching_pattern(color: Color) -> Pixmap {
     paint.set_color(hatch_color);
 
     let mut stroke = Stroke::default();
-    stroke.width = MUTED_HATCH_LINE_WIDTH;
+    stroke.width = HATCH_LINE_WIDTH;
     stroke.line_cap = LineCap::Square;
 
     pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
