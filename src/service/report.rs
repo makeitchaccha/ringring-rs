@@ -1,19 +1,19 @@
-use std::io::{BufReader, Cursor};
-use std::sync::Arc;
-use image::{imageops, ImageFormat, ImageReader};
+use crate::model::{Activity, Participant, Room};
+use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
+use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline, TimelineEntry};
 use image::imageops::FilterType;
+use image::{imageops, ImageFormat, ImageReader};
 use kmeans_colors::{get_kmeans, Kmeans, MapColor, Sort};
 use moka::future::Cache;
 use palette::cast::from_component_slice;
 use palette::{FromColor, IntoColor, Lab, Srgba};
-use reqwest::{Client};
+use reqwest::Client;
 use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Http, MessageFlags, Timestamp, UserId};
+use std::io::{BufReader, Cursor};
+use std::sync::Arc;
 use tiny_skia::{Color, Pixmap};
 use tokio::time::Instant;
 use tracing::error;
-use crate::model::{Activity, Participant, Room};
-use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
-use crate::service::renderer::view::{FillStyle, RenderSection, StrokeStyle, Timeline, TimelineEntry};
 
 #[derive(Debug)]
 pub enum ReportServiceError{
@@ -47,26 +47,13 @@ pub struct RoomDTO {
     pub created_at: Instant,
     pub timestamp: Timestamp,
     pub channel_id: ChannelId,
-    pub participants: Vec<ParticipantDTO>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ParticipantDTO {
-    pub user_id: UserId,
-    pub name: String,
-    pub face: String,
-    pub history: Vec<Activity>
+    pub participants: Vec<Participant>,
 }
 
 impl RoomDTO {
     pub fn from_room(room: &Room) -> Self {
         let participants = room.participants().iter().map(|p| {
-            ParticipantDTO {
-                user_id: p.user_id(),
-                name: p.name().to_string(),
-                face: p.face().to_string(),
-                history: p.history().clone(),
-            }
+            p.clone()
         }).collect();
 
         RoomDTO {
@@ -91,8 +78,8 @@ impl ReportService {
     async fn create_timeline(&self, now: Instant, room: &RoomDTO, avatar_size: u32) -> ReportServiceResult<Timeline> {
         let mut entries = Vec::new();
         for participant in &room.participants {
-            let entry = self.cache.entry(participant.user_id).or_try_insert_with::<_, String>(async {
-                let request = match self.client.get(&participant.face).build() {
+            let entry = self.cache.entry(participant.user_id()).or_try_insert_with::<_, String>(async {
+                let request = match self.client.get(participant.face()).build() {
                     Ok(request) => request,
                     Err(err) => {
                         error!("CRITICAL: failed to build request, use fallback avatar: {:?}", err);
@@ -180,7 +167,7 @@ impl ReportService {
 
             entries.push(TimelineEntry{
                 avatar: visual.avatar,
-                sections: convert_to_render_sections(room.created_at, now, &participant.history),
+                sections: convert_to_render_sections(room.created_at, now, participant.history()),
                 color: visual.primary_color
             });
         }

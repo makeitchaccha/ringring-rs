@@ -3,7 +3,7 @@ use serenity::all::UserId;
 use tokio::time::Instant;
 use crate::model::activity::{Activity, ActivityError, ActivityResult, VoiceStateFlags};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Participant{
     user_id: UserId,
     name: String,

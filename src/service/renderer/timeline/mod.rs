@@ -1,10 +1,11 @@
 mod policy;
 mod layout;
 
-use crate::model::{Participant, Room};
+use crate::model::Participant;
 use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
 use crate::service::renderer::timeline::policy::AspectRatioPolicy;
 use crate::service::renderer::view::Timeline;
+use crate::service::report::RoomDTO;
 use chrono::TimeDelta;
 use serenity::all::{
     CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp,
@@ -12,7 +13,6 @@ use serenity::all::{
 };
 use tiny_skia::{Color, FillRule, FilterQuality, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
 use tokio::time::Instant;
-use crate::service::report::{ParticipantDTO, RoomDTO};
 
 #[derive(Debug)]
 pub enum TimelineRendererError {
@@ -159,11 +159,11 @@ impl TimelineRenderer {
                 format!("{}", Self::format_time_delta(elapsed)),
                 true,
             )
-            // .field(
-            //     "history",
-            //     Self::format_history(now, room.participants),
-            //     false,
-            // )
+            .field(
+                "history",
+                Self::format_history(now, &room.participants),
+                false,
+            )
             .image("attachment://thumbnail.png")
             .timestamp(timestamp)
             .footer(CreateEmbedFooter::new("ringring-rs v25.11.10"));
