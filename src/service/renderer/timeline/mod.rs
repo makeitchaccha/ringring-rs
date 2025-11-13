@@ -156,16 +156,16 @@ impl TimelineRenderer {
             paint.anti_alias = true;
             paint.set_color(entry.fill_color);
 
+            let path_creator = |start_ratio, end_ratio| {
+                let mut path_builder = PathBuilder::new();
+                path_builder.push_rect(Rect::from_ltrb(start_ratio, TIMELINE_BAR_TOP_RATIO, end_ratio, TIMELINE_BAR_BOTTOM_RATIO).unwrap());
+
+                path_builder.finish().unwrap().transform(transformer).unwrap()
+            };
+
             // normal strokes later: they may overlap the previous rendered fills.
             for section in &entry.sections {
-                let path = {
-                    let mut path_builder = PathBuilder::new();
-                    path_builder.push_rect(Rect::from_ltrb(section.start_ratio, TIMELINE_BAR_TOP_RATIO, section.end_ratio, TIMELINE_BAR_BOTTOM_RATIO).unwrap());
-
-                    path_builder.finish().unwrap().transform(transformer).unwrap()
-                };
-
-                pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                pixmap.stroke_path(&path_creator(section.start_ratio, section.end_ratio), &paint, &stroke, Transform::identity(), None);
             }
 
             let mut stroke = Stroke::default();
@@ -178,14 +178,7 @@ impl TimelineRenderer {
 
             // finally, streaming strokes
             for section in &entry.streaming_sections {
-                let path = {
-                    let mut path_builder = PathBuilder::new();
-                    path_builder.push_rect(Rect::from_ltrb(section.start_ratio, TIMELINE_BAR_TOP_RATIO, section.end_ratio, TIMELINE_BAR_BOTTOM_RATIO).unwrap());
-
-                    path_builder.finish().unwrap().transform(transformer).unwrap()
-                };
-
-                pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                pixmap.stroke_path(&path_creator(section.start_ratio, section.end_ratio), &paint, &stroke, Transform::identity(), None);
             }
         }
 
