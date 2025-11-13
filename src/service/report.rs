@@ -186,7 +186,8 @@ impl ReportService {
             entries.push(TimelineEntry{
                 avatar: visual.avatar,
                 sections: convert_to_render_sections(room.created_at, now, participant.history()),
-                color: visual.fill_color
+                fill_color: visual.fill_color,
+                stroke_color: visual.stroke_color,
             });
         }
 
@@ -254,14 +255,22 @@ fn convert_to_render_sections(start: Instant, end: Instant, history: &Vec<Activi
             true
         } else {
             let prev = &history[i - 1];
-            !current.is_following(prev)
+            if !current.is_following(prev) {
+                true
+            } else {
+                !prev.flags().is_sharing_screen && current.flags().is_sharing_screen
+            }
         };
 
         let stroke_right_end = if i == history.len() - 1 {
             true
         } else {
             let next = &history[i + 1];
-            !next.is_following(current)
+            if !next.is_following(current) {
+                true
+            } else {
+                current.flags().is_sharing_screen && !next.flags().is_sharing_screen
+            }
         };
 
         let start_ratio = (current.start() - start).as_secs_f32()/duration_sec;

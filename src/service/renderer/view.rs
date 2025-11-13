@@ -14,7 +14,8 @@ pub struct Timeline {
 pub struct TimelineEntry {
     pub avatar: Pixmap,
     pub sections: Vec<RenderSection>,
-    pub color: Color,
+    pub fill_color: Color,
+    pub stroke_color: Color,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

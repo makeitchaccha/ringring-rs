@@ -4,7 +4,7 @@ mod layout;
 use crate::model::Participant;
 use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
 use crate::service::renderer::timeline::policy::AspectRatioPolicy;
-use crate::service::renderer::view::{FillStyle, Timeline};
+use crate::service::renderer::view::{FillStyle, StrokeStyle, Timeline};
 use crate::service::report::RoomDTO;
 use chrono::TimeDelta;
 use serenity::all::{
@@ -15,10 +15,11 @@ use tiny_skia::{Color, FillRule, FilterQuality, LineCap, Mask, Paint, PathBuilde
 use tokio::time::Instant;
 
 const TIMELINE_BAR_HEIGHT_RATIO: f32 = 4.0 / 7.0;
-const TIMELINE_BAR_TOP_RATIO: f32 = 5.0 / 14.0;
+const TIMELINE_BAR_TOP_RATIO: f32 = 3.0 / 14.0;
 
 const TIMELINE_BAR_BOTTOM_RATIO: f32 = TIMELINE_BAR_TOP_RATIO + TIMELINE_BAR_HEIGHT_RATIO;
 
+const STROKE_WIDTH: f32 = 2.0;
 const STREAMING_STROKE_WIDTH: f32 = 3.0;
 
 const HATCH_SIZE: u32 = 10;
@@ -104,6 +105,7 @@ impl TimelineRenderer {
         let mut paint = PixmapPaint::default();
         paint.quality = FilterQuality::Bicubic;
 
+        // Render fills first.
         for (i, entry) in timeline.entries.iter().enumerate() {
             let headline_bb = layout.headline_bb(i);
 
@@ -119,9 +121,9 @@ impl TimelineRenderer {
             let timeline_bb = layout.timeline_bb(i);
             let transformer = Transform::from_bbox(timeline_bb);
 
-            let hatching_pixmap = create_hatching_pattern(entry.color);
+            let hatching_pixmap = create_hatching_pattern(entry.fill_color);
             let hatching_shader = Pattern::new(hatching_pixmap.as_ref(), SpreadMode::Repeat, FilterQuality::Bicubic, 1.0, Transform::identity());
-            let solid_shader = Shader::SolidColor(entry.color);
+            let solid_shader = Shader::SolidColor(entry.fill_color);
             for section in &entry.sections {
                 let path = {
                     let mut path_builder = PathBuilder::new();
@@ -142,6 +144,46 @@ impl TimelineRenderer {
                 };
 
                 pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+
+            // strokes later: they may overlap the previous rendered fills.
+            for section in &entry.sections {
+                let path = {
+                    let mut path_builder = PathBuilder::new();
+
+                    // parallel horizontal lines.
+                    path_builder.move_to(section.start_ratio, TIMELINE_BAR_TOP_RATIO);
+                    path_builder.line_to(section.end_ratio, TIMELINE_BAR_TOP_RATIO);
+                    path_builder.move_to(section.start_ratio, TIMELINE_BAR_BOTTOM_RATIO);
+                    path_builder.line_to(section.end_ratio, TIMELINE_BAR_BOTTOM_RATIO);
+
+                    if section.stroke_left_end {
+                        path_builder.move_to(section.start_ratio, TIMELINE_BAR_TOP_RATIO);
+                        path_builder.line_to(section.start_ratio, TIMELINE_BAR_BOTTOM_RATIO);
+                    }
+
+                    if section.stroke_right_end {
+                        path_builder.move_to(section.end_ratio, TIMELINE_BAR_TOP_RATIO);
+                        path_builder.line_to(section.end_ratio, TIMELINE_BAR_BOTTOM_RATIO);
+                    }
+
+                    path_builder.finish().unwrap().transform(transformer).unwrap()
+                };
+
+                let mut stroke = Stroke::default();
+                stroke.width = match section.stroke_style {
+                    StrokeStyle::Default => STROKE_WIDTH,
+                    StrokeStyle::Streaming => STREAMING_STROKE_WIDTH,
+                };
+
+                let mut paint = Paint::default();
+                paint.anti_alias = true;
+                paint.set_color(match section.stroke_style {
+                    StrokeStyle::Default => entry.fill_color,
+                    StrokeStyle::Streaming => Color::from_rgba(0.6, 0.3, 0.3, 1.0).unwrap(),
+                });
+
+                pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
             }
         }
 
