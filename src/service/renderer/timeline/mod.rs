@@ -109,16 +109,18 @@ impl TimelineRenderer {
             let transformer = Transform::from_bbox(timeline_bb);
 
             for section in &entry.sections {
-                let mut path_builder = PathBuilder::new();
 
-                path_builder.push_rect(Rect::from_ltrb(
-                    section.start_ratio,
-                    5.0/14.0,
-                    section.end_ratio,
-                    9.0/14.0,
-                ).unwrap());
 
-                let path = path_builder.finish().unwrap();
+                let path = {
+                    let mut path_builder = PathBuilder::new();
+                    path_builder.push_rect(Rect::from_ltrb(
+                        section.start_ratio,
+                        5.0/14.0,
+                        section.end_ratio,
+                        9.0/14.0,
+                    ).unwrap());
+                    path_builder.finish().unwrap()
+                };
 
                 let mut paint = Paint::default();
                 paint.set_color(entry.color);
