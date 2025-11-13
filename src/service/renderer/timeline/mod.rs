@@ -21,10 +21,9 @@ const TIMELINE_BAR_BOTTOM_RATIO: f32 = TIMELINE_BAR_TOP_RATIO + TIMELINE_BAR_HEI
 
 const STREAMING_STROKE_WIDTH: f32 = 3.0;
 
-const DEAFENED_ALPHA: f32 = 0.3;
-const MUTED_HATCH_SIZE: u32 = 10;
+const HATCH_SIZE: u32 = 10;
 const HATCH_LINE_WIDTH: f32 = 3.0;
-const MUTED_HATCH_COLOR_ALPHA: f32 = 0.8;
+const MUTED_ALPHA: f32 = 0.8;
 
 #[derive(Debug)]
 pub enum TimelineRendererError {
@@ -191,7 +190,7 @@ impl TimelineRenderer {
 }
 
 fn create_hatching_pattern(color: Color) -> Pixmap {
-    let size = MUTED_HATCH_SIZE;
+    let size = HATCH_SIZE;
     let mut pixmap = Pixmap::new(size, size).unwrap();
     pixmap.fill(Color::from_rgba8(0, 0, 0, 0)); // 背景は透明
 
@@ -221,7 +220,7 @@ fn create_hatching_pattern(color: Color) -> Pixmap {
 
     let mut paint = Paint::default();
     paint.anti_alias = true;
-    let hatch_color = Color::from_rgba(color.red(), color.green(), color.blue(), MUTED_HATCH_COLOR_ALPHA).unwrap();
+    let hatch_color = Color::from_rgba(color.red(), color.green(), color.blue(), MUTED_ALPHA).unwrap();
     paint.set_color(hatch_color);
 
     let mut stroke = Stroke::default();
