@@ -1,3 +1,7 @@
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use ringring_rs::model::RoomManager;
 use ringring_rs::service::report::{ReportService, RoomDTO};
 use serenity::all::{ChannelId, GuildId, Timestamp, VoiceState};
