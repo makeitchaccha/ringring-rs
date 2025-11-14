@@ -32,8 +32,8 @@ pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
 #[derive(Clone)]
 struct EntryVisual {
     pub avatar: Pixmap,
-    pub fill_color: Color,
-    pub stroke_color: Color,
+    pub active_color: Color,
+    pub inactive_color: Color,
 }
 
 pub struct ReportService {
@@ -110,7 +110,7 @@ impl ReportService {
                     };
                     let avatar_image = imageops::resize(&avatar_image, avatar_size, avatar_size, FilterType::Lanczos3);
 
-                    let fill_color = {
+                    let active_color = {
                         let lab: Vec<Lab> = from_component_slice::<Srgba<u8>>(&avatar_image.to_vec())
                             .iter()
                             .map(|x| x.color.into_linear().into_color())
@@ -153,18 +153,13 @@ impl ReportService {
                         }
                     };
 
-                    let stroke_color = {
-                        let mut color_lab: Lab = Srgba::new(fill_color.red(), fill_color.green(), fill_color.blue(), fill_color.alpha()).into_color();
-                        color_lab.l *= 0.8;
-                        let color: Srgba = color_lab.into_color();
-                        Color::from_rgba(color.red, color.green, color.blue, color.alpha).unwrap()
-                    };
+                    let inactive_color = Color::from_rgba(active_color.red(), active_color.green(), active_color.blue(), active_color.alpha()*0.35).unwrap();
 
                     match Pixmap::decode_png(&bytes) {
                         Ok(pixmap) => Ok(EntryVisual {
                             avatar: pixmap,
-                            fill_color,
-                            stroke_color
+                            active_color,
+                            inactive_color
                         }),
                         Err(err) => Err(err.to_string())
                     }
@@ -187,8 +182,8 @@ impl ReportService {
                 avatar: visual.avatar,
                 sections: convert_to_render_sections(room.created_at, now, participant.history()),
                 streaming_sections: convert_to_streaming_sections(room.created_at, now, participant.history()),
-                fill_color: visual.fill_color,
-                stroke_color: visual.stroke_color,
+                active_color: visual.active_color,
+                inactive_color: visual.inactive_color,
             });
         }
 

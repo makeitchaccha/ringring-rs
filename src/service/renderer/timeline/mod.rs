@@ -121,16 +121,18 @@ impl TimelineRenderer {
             let timeline_bb = layout.timeline_bb(i);
             let transformer = Transform::from_bbox(timeline_bb);
 
-            let hatching_pixmap = create_hatching_pattern(entry.fill_color);
-            let hatching_shader = Pattern::new(hatching_pixmap.as_ref(), SpreadMode::Repeat, FilterQuality::Bicubic, 1.0, Transform::identity());
-            let solid_shader = Shader::SolidColor(entry.fill_color);
+            let muted_pixmap = create_hatching_pattern(entry.active_color, entry.inactive_color);
+            let muted_shader = Pattern::new(muted_pixmap.as_ref(), SpreadMode::Repeat, FilterQuality::Bicubic, 1.0, Transform::identity());
+            let active_shader = Shader::SolidColor(entry.active_color);
+            let deafened_shader = Shader::SolidColor(entry.inactive_color);
+
             for section in &entry.sections {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
                 paint.shader = match section.fill_style {
-                    FillStyle::Active => solid_shader.clone(),
-                    FillStyle::Muted => hatching_shader.clone(),
-                    FillStyle::Deafened => { continue }, // skips rendering strokes.
+                    FillStyle::Active => active_shader.clone(),
+                    FillStyle::Muted => muted_shader.clone(),
+                    FillStyle::Deafened => deafened_shader.clone(),
                 };
 
                 let path = {
@@ -154,7 +156,7 @@ impl TimelineRenderer {
 
             let mut paint = Paint::default();
             paint.anti_alias = true;
-            paint.set_color(entry.fill_color);
+            paint.set_color(entry.active_color);
 
             let path_creator = |start_ratio, end_ratio| {
                 let mut path_builder = PathBuilder::new();
@@ -226,10 +228,10 @@ impl TimelineRenderer {
     }
 }
 
-fn create_hatching_pattern(color: Color) -> Pixmap {
+fn create_hatching_pattern(active: Color, inactive: Color) -> Pixmap {
     let size = HATCH_SIZE;
     let mut pixmap = Pixmap::new(size, size).unwrap();
-    pixmap.fill(Color::from_rgba8(0, 0, 0, 0)); // 背景は透明
+    pixmap.fill(inactive);
 
     let mut path_builder = PathBuilder::new();
 
@@ -257,7 +259,7 @@ fn create_hatching_pattern(color: Color) -> Pixmap {
 
     let mut paint = Paint::default();
     paint.anti_alias = true;
-    let hatch_color = Color::from_rgba(color.red(), color.green(), color.blue(), MUTED_ALPHA).unwrap();
+    let hatch_color = Color::from_rgba(active.red(), active.green(), active.blue(), MUTED_ALPHA).unwrap();
     paint.set_color(hatch_color);
 
     let mut stroke = Stroke::default();
