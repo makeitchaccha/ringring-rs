@@ -1,6 +1,6 @@
 use crate::model::{Activity, Participant, Room};
 use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
-use crate::service::renderer::view::{FillStyle, RenderSection, StreamingSection, Timeline, TimelineEntry};
+use crate::service::renderer::view::{FillStyle, VoiceSection, StreamingSection, Timeline, TimelineEntry};
 use image::imageops::FilterType;
 use image::{imageops, ImageFormat, ImageReader};
 use kmeans_colors::{get_kmeans, Kmeans, Sort};
@@ -180,7 +180,7 @@ impl ReportService {
 
             entries.push(TimelineEntry{
                 avatar: visual.avatar,
-                sections: convert_to_render_sections(room.created_at, now, participant.history()),
+                voice_sections: convert_to_voice_sections(room.created_at, now, participant.history()),
                 streaming_sections: convert_to_streaming_sections(room.created_at, now, participant.history()),
                 active_color: visual.active_color,
                 inactive_color: visual.inactive_color,
@@ -238,7 +238,7 @@ impl ReportService {
     }
 }
 
-fn convert_to_render_sections(start: Instant, end: Instant, history: &Vec<Activity>) -> Vec<RenderSection> {
+fn convert_to_voice_sections(start: Instant, end: Instant, history: &Vec<Activity>) -> Vec<VoiceSection> {
     let duration_sec = (end - start).as_secs_f32();
     let mut render_sections = Vec::new();
 
@@ -249,7 +249,7 @@ fn convert_to_render_sections(start: Instant, end: Instant, history: &Vec<Activi
         let start_ratio = (current.start() - start).as_secs_f32()/duration_sec;
         let end_ratio = (current.end().unwrap_or(end) - start).as_secs_f32()/duration_sec;
 
-        render_sections.push(RenderSection {
+        render_sections.push(VoiceSection {
             start_ratio,
             end_ratio,
             fill_style,

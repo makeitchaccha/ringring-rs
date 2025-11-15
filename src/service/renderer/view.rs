@@ -12,7 +12,7 @@ pub struct Timeline {
 
 pub struct TimelineEntry {
     pub avatar: Pixmap,
-    pub sections: Vec<RenderSection>,
+    pub voice_sections: Vec<VoiceSection>,
     pub streaming_sections: Vec<StreamingSection>,
     pub active_color: Color,
     pub inactive_color: Color,
@@ -35,7 +35,7 @@ impl FillStyle {
     }
 }
 
-pub struct RenderSection {
+pub struct VoiceSection {
     pub start_ratio: f32,
     pub end_ratio: f32,
     pub fill_style: FillStyle,

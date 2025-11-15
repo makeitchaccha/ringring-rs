@@ -126,7 +126,7 @@ impl TimelineRenderer {
             let active_shader = Shader::SolidColor(entry.active_color);
             let deafened_shader = Shader::SolidColor(entry.inactive_color);
 
-            for section in &entry.sections {
+            for section in &entry.voice_sections {
                 let mut paint = Paint::default();
                 paint.anti_alias = true;
                 paint.shader = match section.fill_style {
@@ -166,7 +166,7 @@ impl TimelineRenderer {
             };
 
             // normal strokes later: they may overlap the previous rendered fills.
-            for section in &entry.sections {
+            for section in &entry.voice_sections {
                 pixmap.stroke_path(&path_creator(section.start_ratio, section.end_ratio), &paint, &stroke, Transform::identity(), None);
             }
 
