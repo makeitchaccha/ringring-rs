@@ -47,6 +47,7 @@ impl TimelineRenderer {
                     right: 10.0,
                     bottom: 10.0,
                 },
+                label_area_height: 20.0,
                 avatar_column_width: 100.0,
                 min_timeline_width: 900.0,
                 entry_height: 70.0,
