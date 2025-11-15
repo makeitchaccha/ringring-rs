@@ -10,7 +10,9 @@ use palette::{FromColor, IntoColor, Lab, Srgba};
 use reqwest::Client;
 use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Http, MessageFlags, Timestamp, UserId};
 use std::io::{BufReader, Cursor};
+use std::ops::Add;
 use std::sync::Arc;
+use std::time::Duration;
 use tiny_skia::{Color, Pixmap};
 use tokio::time::Instant;
 use tracing::error;
@@ -78,6 +80,9 @@ impl ReportService {
 
     async fn create_timeline(&self, now: Instant, room: &RoomDTO, avatar_size: u32) -> ReportServiceResult<Timeline> {
         let mut entries = Vec::new();
+
+        let end = calculate_auto_scale(room.created_at, now);
+
         for participant in &room.participants {
             let entry = self.cache.entry(participant.user_id()).or_try_insert_with::<_, String>(async {
                 let request = match self.client.get(participant.face()).build() {
@@ -180,8 +185,8 @@ impl ReportService {
 
             entries.push(TimelineEntry{
                 avatar: visual.avatar,
-                voice_sections: convert_to_voice_sections(room.created_at, now, participant.history()),
-                streaming_sections: convert_to_streaming_sections(room.created_at, now, participant.history()),
+                voice_sections: convert_to_voice_sections(room.created_at, now, end, participant.history()),
+                streaming_sections: convert_to_streaming_sections(room.created_at, now, end, participant.history()),
                 active_color: visual.active_color,
                 inactive_color: visual.inactive_color,
             });
@@ -189,8 +194,8 @@ impl ReportService {
 
         let timeline = Timeline{
             start: room.created_at,
-            end: now,
-            indicator: None,
+            end,
+            indicator: Some(now),
             entries
         };
 
@@ -238,7 +243,7 @@ impl ReportService {
     }
 }
 
-fn convert_to_voice_sections(start: Instant, end: Instant, history: &Vec<Activity>) -> Vec<VoiceSection> {
+fn convert_to_voice_sections(start: Instant, now: Instant, end: Instant, history: &Vec<Activity>) -> Vec<VoiceSection> {
     let duration_sec = (end - start).as_secs_f32();
     let mut render_sections = Vec::new();
 
@@ -247,7 +252,7 @@ fn convert_to_voice_sections(start: Instant, end: Instant, history: &Vec<Activit
         let fill_style = FillStyle::from_flags(current.flags());
 
         let start_ratio = (current.start() - start).as_secs_f32()/duration_sec;
-        let end_ratio = (current.end().unwrap_or(end) - start).as_secs_f32()/duration_sec;
+        let end_ratio = (current.end().unwrap_or(now) - start).as_secs_f32()/duration_sec;
 
         render_sections.push(VoiceSection {
             start_ratio,
@@ -259,7 +264,7 @@ fn convert_to_voice_sections(start: Instant, end: Instant, history: &Vec<Activit
     render_sections
 }
 
-fn convert_to_streaming_sections(start: Instant, end: Instant, history: &Vec<Activity>) -> Vec<StreamingSection> {
+fn convert_to_streaming_sections(start: Instant, now: Instant, end: Instant, history: &Vec<Activity>) -> Vec<StreamingSection> {
     let duration_sec = (end - start).as_secs_f32();
     let mut streaming_sections = Vec::new();
 
@@ -301,7 +306,7 @@ fn convert_to_streaming_sections(start: Instant, end: Instant, history: &Vec<Act
 
             if terminated {
                 let start_ratio = (streaming_start.start() - start).as_secs_f32()/duration_sec;
-                let end_ratio = (current_activity.end().unwrap_or(end) - start).as_secs_f32()/duration_sec;
+                let end_ratio = (current_activity.end().unwrap_or(now) - start).as_secs_f32()/duration_sec;
 
                 streaming_sections.push(StreamingSection{
                     start_ratio,
@@ -313,4 +318,33 @@ fn convert_to_streaming_sections(start: Instant, end: Instant, history: &Vec<Act
     }
 
     streaming_sections
+}
+
+fn calculate_auto_scale(start: Instant, end: Instant) -> Instant {
+    const FRAMES: [Duration; 12] = [
+        Duration::from_mins(1),
+        Duration::from_mins(5),
+        Duration::from_mins(10),
+        Duration::from_mins(30),
+        Duration::from_hours(1),
+        Duration::from_hours(2),
+        Duration::from_hours(3),
+        Duration::from_hours(4),
+        Duration::from_hours(6),
+        Duration::from_hours(8),
+        Duration::from_hours(12),
+        Duration::from_hours(24),
+    ];
+
+    let duration = end - start;
+
+    for frame in FRAMES {
+        if duration < frame {
+            return start.add(frame);
+        }
+    }
+
+    let duration_days = duration.as_secs() / (24 * 60 * 60);
+
+    start.add(Duration::from_hours(24 * (1 + duration_days)))
 }
