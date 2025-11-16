@@ -108,7 +108,7 @@ impl TimelineRenderer {
 
         // Render fills first.
         for (i, entry) in timeline.entries.iter().enumerate() {
-            let headline_bb = layout.headline_bb(i);
+            let headline_bb = layout.headline_bb_for_entry(i);
 
             let avatar = entry.avatar.as_ref();
 
@@ -119,7 +119,7 @@ impl TimelineRenderer {
 
             pixmap.draw_pixmap(0, 0, avatar, &paint, avatar_transform, Some(&avatar_mask(transform)));
 
-            let timeline_bb = layout.timeline_bb(i);
+            let timeline_bb = layout.timeline_bb_for_entry(i);
             let transformer = Transform::from_bbox(timeline_bb);
 
             let muted_pixmap = create_hatching_pattern(entry.active_color, entry.inactive_color);
@@ -184,6 +184,26 @@ impl TimelineRenderer {
                 pixmap.stroke_path(&path_creator(section.start_ratio, section.end_ratio), &paint, &stroke, Transform::identity(), None);
             }
         }
+
+        let full_timeline_bb = layout.full_timeline_bb();
+
+        // draw start and end
+        let path = {
+            let mut path_builder = PathBuilder::new();
+            path_builder.move_to(0.0, 0.0);
+            path_builder.line_to(0.0, 1.0);
+            path_builder.move_to(1.0, 0.0);
+            path_builder.line_to(1.0, 1.0);
+
+            path_builder.finish().unwrap().transform(Transform::from_bbox(layout.full_timeline_bb())).unwrap()
+        };
+        let mut paint = Paint::default();
+        paint.set_color(Color::from_rgba(0.2, 0.2, 0.2, 1.0).unwrap());
+
+        let mut stroke = Stroke::default();
+        stroke.width = STREAMING_STROKE_WIDTH;
+
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 
         Ok(pixmap)
     }
