@@ -1,6 +1,5 @@
-use tiny_skia::NonZeroRect;
 use crate::service::renderer::timeline::policy::AspectRatioPolicy;
-use crate::service::renderer::view::Timeline;
+use tiny_skia::NonZeroRect;
 
 #[derive(Copy, Clone)]
 pub struct Margin {

@@ -77,7 +77,8 @@ async fn main() {
                     RoomDTO::from_room(&room)
                 };
                 let now = Instant::now();
-                match reporter.send_room_report(&http, now, &room_dto).await{
+                let now_timestamp = Timestamp::now();
+                match reporter.send_room_report(&http, now, now_timestamp, &room_dto).await{
                     Ok(_) => {},
                     Err(e) => {
                         error!("Error sending room report: {:?}", e);

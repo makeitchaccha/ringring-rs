@@ -6,7 +6,7 @@ use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
 use crate::service::renderer::timeline::policy::AspectRatioPolicy;
 use crate::service::renderer::view::{FillStyle, Timeline};
 use crate::service::report::RoomDTO;
-use chrono::TimeDelta;
+use chrono::{DurationRound, TimeDelta};
 use serenity::all::{
     CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp,
     FormattedTimestampStyle, Mentionable, Timestamp,
@@ -98,7 +98,6 @@ impl TimelineRenderer {
             avatar_mask
         };
 
-
         let mut pixmap = Pixmap::new(layout.total_width() as u32, layout.total_height() as u32)
             .ok_or(TimelineRendererError::PixelmapCreationError)?;
         pixmap.fill(Color::WHITE);
@@ -106,7 +105,10 @@ impl TimelineRenderer {
         let mut paint = PixmapPaint::default();
         paint.quality = FilterQuality::Bicubic;
 
-        // Render fills first.
+        // Render ticks first.
+        // timeline.created_timestamp.duration_trunc()
+
+        // Then, Render fills.
         for (i, entry) in timeline.entries.iter().enumerate() {
             let headline_bb = layout.headline_bb_for_entry(i);
 
@@ -177,7 +179,7 @@ impl TimelineRenderer {
 
             let mut paint = Paint::default();
             paint.anti_alias = true;
-            paint.set_color(Color::from_rgba(1.0, 0.4, 0.4, 1.0).unwrap());
+            paint.set_color(entry.streaming_color);
 
             // finally, streaming strokes
             for section in &entry.streaming_sections {

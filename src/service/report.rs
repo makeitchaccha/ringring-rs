@@ -1,6 +1,6 @@
 use crate::model::{Activity, Participant, Room};
 use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
-use crate::service::renderer::view::{FillStyle, VoiceSection, StreamingSection, Timeline, TimelineEntry};
+use crate::service::renderer::view::{FillStyle, VoiceSection, StreamingSection, Timeline, TimelineEntry, Tick};
 use image::imageops::FilterType;
 use image::{imageops, ImageFormat, ImageReader};
 use kmeans_colors::{get_kmeans, Kmeans, Sort};
@@ -11,8 +11,10 @@ use reqwest::Client;
 use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Http, MessageFlags, Timestamp, UserId};
 use std::io::{BufReader, Cursor};
 use std::ops::Add;
+use std::os::linux::raw::stat;
 use std::sync::Arc;
 use std::time::Duration;
+use chrono::Local;
 use tiny_skia::{Color, Pixmap};
 use tokio::time::Instant;
 use tracing::error;
@@ -36,6 +38,7 @@ struct EntryVisual {
     pub avatar: Pixmap,
     pub active_color: Color,
     pub inactive_color: Color,
+    pub streaming_color: Color,
 }
 
 pub struct ReportService {
@@ -78,10 +81,10 @@ impl ReportService {
         }
     }
 
-    async fn create_timeline(&self, now: Instant, room: &RoomDTO, avatar_size: u32) -> ReportServiceResult<Timeline> {
+    async fn create_timeline(&self, now: Instant, now_timestamp: Timestamp, room: &RoomDTO, avatar_size: u32) -> ReportServiceResult<Timeline> {
         let mut entries = Vec::new();
 
-        let end = calculate_auto_scale(room.created_at, now);
+        let terminated_at = calculate_auto_scale(room.created_at, now);
 
         for participant in &room.participants {
             let entry = self.cache.entry(participant.user_id()).or_try_insert_with::<_, String>(async {
@@ -159,12 +162,19 @@ impl ReportService {
                     };
 
                     let inactive_color = Color::from_rgba(active_color.red(), active_color.green(), active_color.blue(), active_color.alpha()*0.35).unwrap();
+                    let streaming_color = {
+                        let mut lab_color: Lab = Srgba::new(active_color.red(), active_color.green(), active_color.blue(), active_color.alpha()).into_color();
+                        lab_color.l = lab_color.l * 0.4;
+                        let rgba_color = Srgba::from_color(lab_color);
+                        Color::from_rgba(rgba_color.red, rgba_color.green, rgba_color.blue, rgba_color.alpha).unwrap()
+                    };
 
                     match Pixmap::decode_png(&bytes) {
                         Ok(pixmap) => Ok(EntryVisual {
                             avatar: pixmap,
                             active_color,
-                            inactive_color
+                            inactive_color,
+                            streaming_color,
                         }),
                         Err(err) => Err(err.to_string())
                     }
@@ -185,25 +195,29 @@ impl ReportService {
 
             entries.push(TimelineEntry{
                 avatar: visual.avatar,
-                voice_sections: convert_to_voice_sections(room.created_at, now, end, participant.history()),
-                streaming_sections: convert_to_streaming_sections(room.created_at, now, end, participant.history()),
+                voice_sections: convert_to_voice_sections(room.created_at, now, terminated_at, participant.history()),
+                streaming_sections: convert_to_streaming_sections(room.created_at, now, terminated_at, participant.history()),
                 active_color: visual.active_color,
                 inactive_color: visual.inactive_color,
+                streaming_color: visual.streaming_color,
             });
         }
 
         let timeline = Timeline{
-            start: room.created_at,
-            end,
+            created_at: room.created_at,
+            terminated_at,
+            created_timestamp: room.timestamp.with_timezone(&Local),
+            terminated_timestamp: now_timestamp.with_timezone(&Local),
             indicator: Some(now),
-            entries
+            entries,
+            tick: choose_suitable_tics(terminated_at - room.created_at),
         };
 
         Ok(timeline)
     }
 
-    pub async fn send_room_report(&self, http: &Http, now: Instant, room: &RoomDTO) -> ReportServiceResult<()> {
-        let timeline = self.create_timeline(now, room, 64).await?;
+    pub async fn send_room_report(&self, http: &Http, now: Instant, now_timestamp: Timestamp,room: &RoomDTO) -> ReportServiceResult<()> {
+        let timeline = self.create_timeline(now, now_timestamp, room, 64).await?;
 
         let renderer = self.renderer.clone();
 
@@ -347,4 +361,31 @@ fn calculate_auto_scale(start: Instant, end: Instant) -> Instant {
     let duration_days = duration.as_secs() / (24 * 60 * 60);
 
     start.add(Duration::from_hours(24 * (1 + duration_days)))
+}
+
+fn choose_suitable_tics(duration: Duration) -> Tick {
+    const TICKS: [Tick; 12] = [
+        Tick::secs_grain(10),
+        Tick::mins_grain(1),
+        Tick::mins_grain(2),
+        Tick::mins_grain(5),
+        Tick::mins_grain(10),
+        Tick::mins_grain(15),
+        Tick::mins_grain(30),
+        Tick::hours_grain(1),
+        Tick::hours_grain(2),
+        Tick::hours_grain(4),
+        Tick::hours_grain(6),
+        Tick::hours_grain(12),
+    ];
+
+    let duration_secs = duration.as_secs();
+
+    for tick in TICKS {
+        if duration_secs / tick.interval.as_secs() < 10 {
+            return tick;
+        }
+    }
+
+    Tick::hours_grain(24)
 }
