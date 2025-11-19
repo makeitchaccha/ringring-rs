@@ -44,9 +44,19 @@ impl Tick {
         let start_of_year = year == 0 && start_of_day;
 
         if self.with_sec {
-            format!("")
+            let seconds = timestamp.second();
+
+            match (start_of_year, start_of_day) {
+                (true, _) => format!("{:04}/{:02}/{:02}\n{:02}:{:02}:{:02}", year, month, day, hours, minutes, seconds),
+                (_, true) => format!("{:02}/{:02}\n{:02}:{:02}:{:02}", month, day, hours, minutes, seconds),
+                (_, _) => format!("{:02}:{:02}:{:02}", hours, minutes, seconds),
+            }
         } else {
-            format!("")
+            match (start_of_year, start_of_day) {
+                (true, _) => format!("{:04}/{:02}/{:02}\n{:02}:{:02}", year, month, day, hours, minutes),
+                (_, true) => format!("{:02}/{:02}\n{:02}:{:02}", month, day, hours, minutes),
+                (_, _) => format!("{:02}:{:02}", hours, minutes),
+            }
         }
     }
 }

@@ -11,7 +11,6 @@ use reqwest::Client;
 use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Http, MessageFlags, Timestamp, UserId};
 use std::io::{BufReader, Cursor};
 use std::ops::Add;
-use std::os::linux::raw::stat;
 use std::sync::Arc;
 use std::time::Duration;
 use chrono::Local;

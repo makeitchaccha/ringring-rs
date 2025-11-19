@@ -7,12 +7,15 @@ use crate::service::renderer::timeline::policy::AspectRatioPolicy;
 use crate::service::renderer::view::{FillStyle, Timeline};
 use crate::service::report::RoomDTO;
 use chrono::{DurationRound, TimeDelta};
+use cosmic_text::{Align, Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
 use serenity::all::{
     CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp,
     FormattedTimestampStyle, Mentionable, Timestamp,
 };
-use tiny_skia::{Color, FillRule, FilterQuality, LineCap, Mask, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint, Rect, Shader, SpreadMode, Stroke, Transform};
+use std::sync::{Arc, Mutex};
+use tiny_skia::{Color, FillRule, FilterQuality, IntSize, LineCap, Mask, NonZeroRect, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint, PixmapRef, Point, Rect, Shader, SpreadMode, Stroke, Transform};
 use tokio::time::Instant;
+use tracing::debug;
 
 const TIMELINE_BAR_HEIGHT_RATIO: f32 = 4.0 / 7.0;
 const TIMELINE_BAR_TOP_RATIO: f32 = 3.0 / 14.0;
@@ -35,6 +38,8 @@ pub type TimelineRendererResult<T> = Result<T, TimelineRendererError>;
 
 pub struct TimelineRenderer{
     layout_config: LayoutConfig,
+    font_system: Arc<Mutex<FontSystem>>,
+    swash_cache: Arc<Mutex<SwashCache>>,
 }
 
 impl TimelineRenderer {
@@ -53,7 +58,9 @@ impl TimelineRenderer {
                 entry_height: 70.0,
                 avatar_size: 64.0,
                 aspect_ratio_policy: AspectRatioPolicy::discord_thumbnail_4_3(),
-            }
+            },
+            font_system: Arc::new(Mutex::new(FontSystem::new())),
+            swash_cache: Arc::new(Mutex::new(SwashCache::new())),
         }
     }
 
@@ -102,11 +109,16 @@ impl TimelineRenderer {
             .ok_or(TimelineRendererError::PixelmapCreationError)?;
         pixmap.fill(Color::WHITE);
 
+        // Render ticks first.
+        {
+            let mut font_system = self.font_system.lock().unwrap();
+            let mut swash_cache = self.swash_cache.lock().unwrap();
+            Self::render_ticks(&mut pixmap, timeline, layout.full_timeline_bb(), &mut font_system, &mut swash_cache);
+
+        }
+
         let mut paint = PixmapPaint::default();
         paint.quality = FilterQuality::Bicubic;
-
-        // Render ticks first.
-        // timeline.created_timestamp.duration_trunc()
 
         // Then, Render fills.
         for (i, entry) in timeline.entries.iter().enumerate() {
@@ -187,8 +199,6 @@ impl TimelineRenderer {
             }
         }
 
-        let full_timeline_bb = layout.full_timeline_bb();
-
         // draw start and end
         let path = {
             let mut path_builder = PathBuilder::new();
@@ -249,6 +259,41 @@ impl TimelineRenderer {
 
         builder
     }
+
+    fn render_ticks(pixmap: &mut Pixmap, timeline: &Timeline, full_timeline_bb: NonZeroRect, font_system: &mut FontSystem, swash_cache: &mut SwashCache) {
+        let interval = TimeDelta::from_std(timeline.tick.interval).unwrap();
+        let base_timestamp = timeline.created_timestamp.duration_trunc(interval).unwrap();
+
+        let mut delta = base_timestamp - timeline.created_timestamp;
+        if delta < TimeDelta::zero() {
+            delta += interval;
+        }
+        let elapsed = TimeDelta::from_std(timeline.terminated_at - timeline.created_at).unwrap();
+
+        let transform = Transform::from_bbox(full_timeline_bb);
+
+        let path = {
+            let mut builder = PathBuilder::new();
+
+            while delta < elapsed {
+                let ratio = delta.as_seconds_f32()/elapsed.as_seconds_f32();
+                let mut position = (ratio, 0.0f32).into();
+                transform.map_point(&mut position);
+                draw_text(pixmap, font_system, swash_cache, timeline.tick.format(timeline.created_timestamp + delta).as_str(), 20.0, position.x, position.y, Color::BLACK);
+                builder.move_to(ratio, 0.0);
+                builder.line_to(ratio, 1.0);
+                delta += interval;
+            }
+
+            builder.finish().unwrap().transform(transform).unwrap()
+        };
+
+        let mut paint = Paint::default();
+        paint.set_color(Color::from_rgba(0.4, 0.4, 0.4, 1.0).unwrap());
+        let mut stroke = Stroke::default();
+        stroke.width = 1.0;
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
 }
 
 fn create_hatching_pattern(active: Color, inactive: Color) -> Pixmap {
@@ -292,4 +337,92 @@ fn create_hatching_pattern(active: Color, inactive: Color) -> Pixmap {
     pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 
     pixmap
+}
+
+fn draw_text(
+    pixmap: &mut Pixmap,
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    text: &str,
+    font_size: f32,
+    x: f32,
+    y: f32,
+    color: Color,
+) {
+    let metrics = Metrics::new(font_size, font_size * 1.2);
+    let mut buffer = Buffer::new(font_system, metrics);
+
+    let attrs = Attrs::new();
+    buffer.set_text(font_system, text, &attrs, Shaping::Advanced, Some(Align::Center));
+    buffer.shape_until_scroll(font_system, true);
+
+    let size = IntSize::from_wh(pixmap.width(), pixmap.height()).unwrap();
+    let mut text_mask_data = vec![0; size.width() as usize * size.height() as usize];
+
+    for run in buffer.layout_runs() {
+        for glyph in run.glyphs {
+            debug!("now drawing: {:?}", glyph);
+            let physical_glyph = glyph.physical((0.0, 0.0), 1.0);
+
+            if let Some(image) = swash_cache.get_image(font_system, physical_glyph.cache_key) {
+                debug!("placement: {:?}", image.placement);
+                let left = x as i32 + image.placement.left + physical_glyph.x;
+                let top = y as i32 - image.placement.top + physical_glyph.y;
+                let width = image.placement.width;
+                let height = image.placement.height;
+
+                if width == 0 || height == 0 {
+                    continue;
+                }
+
+                match image.content {
+                    SwashContent::Mask => { // character
+                        for (i, &a) in image.data.iter().enumerate() {
+                            let x = i as i32 % width as i32 + left;
+                            let y = i as i32 / width as i32 + top;
+                            if x < 0 || size.width() as i32 <= x {
+                                continue;
+                            }
+                            if y < 0 || size.height() as i32 <= y {
+                                continue;
+                            }
+                            let idx = (x + y * size.width() as i32) as usize;
+                            text_mask_data[idx] = a;
+                        }
+                    },
+
+                    SwashContent::Color => { // emoji
+                        if let Some(glyph_pixmap) = PixmapRef::from_bytes(&image.data, width, height) {
+                            pixmap.draw_pixmap(
+                                left,
+                                top,
+                                glyph_pixmap,
+                                &PixmapPaint::default(),
+                                Transform::identity(),
+                                None,
+                            );
+                        }
+                    },
+
+                    SwashContent::SubpixelMask => {
+                        // skips
+                    }
+                }
+            }
+        }
+
+    }
+
+    let mut paint = Paint::default();
+    paint.set_color(color);
+
+    if let Some(mask) = Mask::from_vec(text_mask_data, size) {
+        pixmap.fill_rect(
+            Rect::from_xywh(0.0, 0.0, size.width() as f32, size.height() as f32)
+                .unwrap_or(Rect::from_xywh(0.0, 0.0, 0.0, 0.0).unwrap()),
+            &paint,
+            Transform::identity(),
+            Some(&mask),
+        );
+    }
 }

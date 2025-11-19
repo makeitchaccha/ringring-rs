@@ -16,6 +16,7 @@ image = "0.25"
 serenity = "0.12.4"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"]}
 tikv-jemallocator = { version = "0.6.1", features = ["profiling"], optional = true }
+cosmic-text = "0.15.0"
 
 [features]
 default = ["jemalloc"]
