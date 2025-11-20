@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::model::{Activity, Participant, Room};
 use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
 use crate::service::renderer::view::{FillStyle, VoiceSection, StreamingSection, Timeline, TimelineEntry, Tick};
@@ -8,13 +9,14 @@ use moka::future::Cache;
 use palette::cast::from_component_slice;
 use palette::{FromColor, IntoColor, Lab, Srgba};
 use reqwest::Client;
-use serenity::all::{ChannelId, CreateAttachment, CreateMessage, Http, MessageFlags, Timestamp, UserId};
+use serenity::all::{ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, Http, MessageFlags, MessageId, Timestamp, UserId};
 use std::io::{BufReader, Cursor};
 use std::ops::Add;
-use std::sync::Arc;
+use std::sync::{Arc};
 use std::time::Duration;
 use chrono::Local;
 use tiny_skia::{Color, Pixmap};
+use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing::error;
 
@@ -40,11 +42,44 @@ struct EntryVisual {
     pub streaming_color: Color,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Track {
+    pub message_id: MessageId,
+    pub last_updated_at: Instant,
+}
+
+struct ReportTracker {
+    tracks: HashMap<ChannelId, Track>
+}
+
+impl ReportTracker {
+    fn new() -> Self {
+        ReportTracker{tracks: HashMap::new()}
+    }
+
+    pub fn add_track(&mut self, channel_id: ChannelId, message_id: MessageId) {
+        let track = Track{
+            message_id,
+            last_updated_at: Instant::now()
+        };
+        self.tracks.insert(channel_id, track);
+    }
+
+    pub fn get_track(&self, channel_id: &ChannelId) -> Option<&Track> {
+        self.tracks.get(channel_id)
+    }
+
+    pub fn remove(&mut self, channel_id: ChannelId) {
+        self.tracks.remove(&channel_id);
+    }
+}
+
 pub struct ReportService {
     client: Client,
     cache: Cache<UserId, EntryVisual>,
     renderer: Arc<TimelineRenderer>,
     report_channel_id: ChannelId,
+    tracker: Arc<Mutex<ReportTracker>>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +112,7 @@ impl ReportService {
             cache: Cache::new(100),
             renderer: Arc::new(TimelineRenderer::new()),
             report_channel_id,
+            tracker: Arc::new(Mutex::new(ReportTracker::new())),
         }
     }
 
@@ -215,7 +251,7 @@ impl ReportService {
         Ok(timeline)
     }
 
-    pub async fn send_room_report(&self, http: &Http, now: Instant, now_timestamp: Timestamp,room: &RoomDTO) -> ReportServiceResult<()> {
+    pub async fn send_room_report(&self, http: &Http, now: Instant, now_timestamp: Timestamp, room: &RoomDTO) -> ReportServiceResult<()> {
         let timeline = self.create_timeline(now, now_timestamp, room, 64).await?;
 
         let renderer = self.renderer.clone();
@@ -236,23 +272,51 @@ impl ReportService {
             Err(err) => return Err(ReportServiceError::GenericError(err.to_string()))
         };
 
+        let mut tracker_guard = self.tracker.lock().await;
 
-        match self.report_channel_id
-            .send_message(
-                http,
-                CreateMessage::new()
-                    .embed(self.renderer.generate_ongoing_embed(
-                        now,
-                        Timestamp::now(),
-                        room,
-                    ))
-                    .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
-                    .add_file(CreateAttachment::bytes(encoded_image, "thumbnail.png")),
-            )
-            .await {
-            Ok(_) => Ok(()),
-            Err(err) => Err(ReportServiceError::GenericError(err.to_string())),
+        match tracker_guard.get_track(&room.channel_id) {
+            Some(track) => {
+                match self.report_channel_id
+                    .edit_message(
+                        http,
+                        track.message_id,
+                        EditMessage::new()
+                            .embed(self.renderer.generate_ongoing_embed(
+                                now,
+                                Timestamp::now(),
+                                room,
+                            ))
+                            .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
+                            .attachments(EditAttachments::new().add(CreateAttachment::bytes(encoded_image, "thumbnail.png"))),
+                    )
+                    .await {
+                    Ok(message) => Ok(()),
+                    Err(err) => Err(ReportServiceError::GenericError(err.to_string())),
+                }
+            },
+            None => {
+                match self.report_channel_id
+                    .send_message(
+                        http,
+                        CreateMessage::new()
+                            .embed(self.renderer.generate_ongoing_embed(
+                                now,
+                                Timestamp::now(),
+                                room,
+                            ))
+                            .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
+                            .add_file(CreateAttachment::bytes(encoded_image, "thumbnail.png")),
+                    )
+                    .await {
+                    Ok(message) => {
+                        tracker_guard.add_track(room.channel_id, message.id);
+                        Ok(())
+                    },
+                    Err(err) => Err(ReportServiceError::GenericError(err.to_string())),
+                }
+            }
         }
+
     }
 }
 

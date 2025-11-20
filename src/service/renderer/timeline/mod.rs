@@ -353,16 +353,18 @@ fn draw_text(
     let mut buffer = Buffer::new(font_system, metrics);
 
     let attrs = Attrs::new();
-    buffer.set_text(font_system, text, &attrs, Shaping::Advanced, Some(Align::Center));
+    buffer.set_text(font_system, text, &attrs, Shaping::Advanced, None);
     buffer.shape_until_scroll(font_system, true);
 
     let size = IntSize::from_wh(pixmap.width(), pixmap.height()).unwrap();
     let mut text_mask_data = vec![0; size.width() as usize * size.height() as usize];
 
     for run in buffer.layout_runs() {
+        let half_line_width = run.line_w / 2.0;
+
         for glyph in run.glyphs {
             debug!("now drawing: {:?}", glyph);
-            let physical_glyph = glyph.physical((0.0, 0.0), 1.0);
+            let physical_glyph = glyph.physical((-half_line_width, 0.0), 1.0);
 
             if let Some(image) = swash_cache.get_image(font_system, physical_glyph.cache_key) {
                 debug!("placement: {:?}", image.placement);

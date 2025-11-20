@@ -2,7 +2,7 @@
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-use ringring_rs::model::RoomManager;
+use ringring_rs::model::{Room, RoomManager};
 use ringring_rs::service::report::{ReportService, RoomDTO};
 use serenity::all::{ChannelId, GuildId, Timestamp, VoiceState};
 use serenity::async_trait;
@@ -35,36 +35,37 @@ async fn main() {
 
     // Create a new instance of the Client, logging in as a bot.
     let room_manager = Arc::new(RoomManager::new(16));
+    let report_service = Arc::new(ReportService::new(reqwest::Client::new(), report_channel_id));
     let handler = Handler {
         room_manager: room_manager.clone(),
+        report_service: report_service.clone(),
     };
     let mut client = Client::builder(&token, intents)
         .event_handler(handler)
         .await
         .expect("Err creating client");
 
+    // let manager = room_manager.clone();
+    // tokio::spawn(async move {
+    //     let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
+    //
+    //     interval.tick().await;
+    //
+    //     loop {
+    //         interval.tick().await;
+    //
+    //         let now = Instant::now();
+    //         if let Err(e) = manager.cleanup(now).await {
+    //             error!("Error during room cleanup: {:?}", e);
+    //         }
+    //     }
+    // });
+
     let manager = room_manager.clone();
-    tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
-
-        interval.tick().await;
-
-        loop {
-            interval.tick().await;
-
-            let now = Instant::now();
-            if let Err(e) = manager.cleanup(now).await {
-                error!("Error during room cleanup: {:?}", e);
-            }
-        }
-    });
-
-    let manager = room_manager.clone();
+    let reporter = report_service.clone();
     let http = client.http.clone();
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_mins(1));
-
-        let reporter = ReportService::new(reqwest::Client::new(), report_channel_id);
         interval.tick().await;
 
         loop {
@@ -103,6 +104,7 @@ fn format_voice_state_nicely(voice_state: &VoiceState) -> String {
 
 struct Handler {
     room_manager: Arc<RoomManager>,
+    report_service: Arc<ReportService>,
 }
 
 #[async_trait]
@@ -173,7 +175,7 @@ impl EventHandler for Handler {
         }
     }
 
-    async fn voice_state_update(&self, _ctx: Context, old: Option<VoiceState>, new: VoiceState) {
+    async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
         debug!(
             "voice_state_update: {:?} -> {}",
             old.as_ref().map(|x| format_voice_state_nicely(&x)),
@@ -184,8 +186,16 @@ impl EventHandler for Handler {
         let timestamp = Timestamp::now();
         // if newly connected
         if old.is_none() {
-            if let Err(err) = handle_connect_safely(&manager, now, timestamp, new).await{
-                error!("Error handling disconnect event on channel: {err}");
+            match handle_connect_safely(&manager, now, timestamp, new).await {
+                Ok(room) => {
+                    let room = room.lock().await;
+                    if let Err(err) = self.report_service.send_room_report(ctx.http(), now, timestamp, &RoomDTO::from_room(&room)).await {
+                        error!("Error sending room report: {:?}", err);
+                    }
+                },
+                Err(err) => {
+                    error!("Error handling connect event on channel: {err}");
+                }
             }
             return;
         }
@@ -202,14 +212,22 @@ impl EventHandler for Handler {
         if let Err(err) = handle_disconnect_safely(&manager, now, old).await{
             error!("Error handling disconnect event on channel: {err}");
         }
-        if let Err(err) = handle_connect_safely(&manager, now, timestamp, new).await{
-            error!("Error handling disconnect event on channel: {err}");
+        match handle_connect_safely(&manager, now, timestamp, new).await {
+            Ok(room) => {
+                let room = room.lock().await;
+                if let Err(err) = self.report_service.send_room_report(ctx.http(), now, timestamp, &RoomDTO::from_room(&room)).await {
+                    error!("Error sending room report: {:?}", err);
+                }
+            },
+            Err(err) => {
+                error!("Error handling connect event on channel: {err}");
+            }
         }
         return;
     }
 }
 
-async fn handle_connect_safely(manager: &RoomManager, now: Instant, timestamp: Timestamp, new: VoiceState) -> Result<(), String> {
+async fn handle_connect_safely(manager: &RoomManager, now: Instant, timestamp: Timestamp, new: VoiceState) -> Result<Arc<Mutex<Room>>, String> {
     let flags = (&new).into();
     let member = match new.member {
         Some(member) => member,
@@ -238,7 +256,7 @@ async fn handle_connect_safely(manager: &RoomManager, now: Instant, timestamp: T
             flags,
         )
         .await {
-        Ok(_) => Ok(()),
+        Ok(room) => Ok(room),
         Err(e) => Err(format!("Error handling connect event on channel: {e:?}")),
     }
 }
