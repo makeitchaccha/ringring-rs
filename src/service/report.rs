@@ -18,6 +18,7 @@ use tiny_skia::{Color, Pixmap};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing::error;
+use crate::service::asset::AssetService;
 use crate::service::tracker::Tracker;
 
 #[derive(Debug)]
@@ -34,17 +35,10 @@ impl From<TimelineRendererError> for ReportServiceError {
 
 pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
 
-#[derive(Clone)]
-struct EntryVisual {
-    pub avatar: Pixmap,
-    pub active_color: Color,
-    pub inactive_color: Color,
-    pub streaming_color: Color,
-}
+
 
 pub struct ReportService {
-    client: Client,
-    cache: Cache<UserId, EntryVisual>,
+    asset_service: AssetService,
     renderer: Arc<TimelineRenderer>,
     report_channel_id: ChannelId,
     tracker: Arc<Mutex<Tracker>>,
@@ -74,127 +68,30 @@ impl RoomDTO {
 }
 
 impl ReportService {
-    pub fn new(client: Client, report_channel_id: ChannelId) -> Self {
+    pub fn new(asset_service: AssetService, report_channel_id: ChannelId) -> Self {
         Self{
-            client,
-            cache: Cache::new(100),
+            asset_service,
             renderer: Arc::new(TimelineRenderer::new()),
             report_channel_id,
             tracker: Arc::new(Mutex::new(Tracker::new())),
         }
     }
 
-    async fn create_timeline(&self, now: Instant, now_timestamp: Timestamp, room: &RoomDTO, avatar_size: u32) -> ReportServiceResult<Timeline> {
+    async fn create_timeline(&self, now: Instant, now_timestamp: Timestamp, room: &RoomDTO) -> ReportServiceResult<Timeline> {
         let mut entries = Vec::new();
 
         let terminated_at = calculate_auto_scale(room.created_at, now);
 
         for participant in &room.participants {
-            let entry = self.cache.entry(participant.user_id()).or_try_insert_with::<_, String>(async {
-                let request = match self.client.get(participant.face()).build() {
-                    Ok(request) => request,
+
+            let visual =
+                match self.asset_service.get_members_visual(0.into(), participant.user_id(), participant.face()).await {
+                    Ok(visual) => visual,
                     Err(err) => {
-                        error!("CRITICAL: failed to build request, use fallback avatar: {:?}", err);
-                        self.client.get("https://cdn.discordapp.com/embed/avatars/0.png").build().expect("failed to build request for default avatar!")
+                        error!("An error occurred while fetching member visual: {:?}", err);
+                        continue;
                     }
                 };
-
-                let response = match self.client.execute(request).await {
-                    Ok(response) => response,
-                    Err(err) => return Err(err.to_string())
-                };
-
-                let avatar_bytes = match response.bytes().await {
-                    Ok(bytes) => bytes,
-                    Err(err) => return Err(err.to_string())
-                };
-
-                let task = tokio::task::spawn_blocking(move || {
-                    let avatar_image = match ImageReader::new(BufReader::new(Cursor::new(avatar_bytes))).with_guessed_format() {
-                        Ok(image) => match image.decode() {
-                            Ok(image) => image,
-                            Err(err) => return Err(err.to_string())
-                        },
-                        Err(err) => {
-                            return Err(err.to_string())
-                        }
-                    };
-                    let avatar_image = imageops::resize(&avatar_image, avatar_size, avatar_size, FilterType::Lanczos3);
-
-                    let active_color = {
-                        let lab: Vec<Lab> = from_component_slice::<Srgba<u8>>(&avatar_image.to_vec())
-                            .iter()
-                            .map(|x| x.color.into_linear().into_color())
-                            .filter(|x: &Lab| 20.0 < x.l && x.l < 90.0)
-                            .collect();
-
-                        let mut result = Kmeans::new();
-                        for i in 0..5 {
-                            let run_result = get_kmeans(
-                                3,
-                                30,
-                                1.0,
-                                false,
-                                &lab,
-                                i,
-                            );
-                            if run_result.score < result.score {
-                                result = run_result;
-                            }
-                        }
-
-                        let res = Lab::sort_indexed_colors(&result.centroids, &result.indices);
-
-                        let dominant_color = Lab::get_dominant_color(&res);
-
-                        match dominant_color {
-                            Some(color) => {
-                                let color = Srgba::from_color(color);
-                                Color::from_rgba(color.red, color.green, color.blue, color.alpha).unwrap()
-                            },
-                            None => Color::BLACK,
-                        }
-                    };
-
-                    let mut bytes: Vec<u8> = Vec::new();
-                    match avatar_image.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png) {
-                        Ok(_) => {},
-                        Err(err) => {
-                            return Err(err.to_string())
-                        }
-                    };
-
-                    let inactive_color = Color::from_rgba(active_color.red(), active_color.green(), active_color.blue(), active_color.alpha()*0.35).unwrap();
-                    let streaming_color = {
-                        let mut lab_color: Lab = Srgba::new(active_color.red(), active_color.green(), active_color.blue(), active_color.alpha()).into_color();
-                        lab_color.l = lab_color.l * 0.4;
-                        let rgba_color = Srgba::from_color(lab_color);
-                        Color::from_rgba(rgba_color.red, rgba_color.green, rgba_color.blue, rgba_color.alpha).unwrap()
-                    };
-
-                    match Pixmap::decode_png(&bytes) {
-                        Ok(pixmap) => Ok(EntryVisual {
-                            avatar: pixmap,
-                            active_color,
-                            inactive_color,
-                            streaming_color,
-                        }),
-                        Err(err) => Err(err.to_string())
-                    }
-                });
-
-                let pixmap = match task.await {
-                    Ok(pixmap) => pixmap,
-                    Err(err) => return Err(err.to_string())
-                };
-
-                pixmap
-            }).await;
-
-            let visual = match entry {
-                Ok(entry) => entry.into_value(),
-                Err(err) => return Err(ReportServiceError::GenericError(err.to_string())),
-            };
 
             entries.push(TimelineEntry{
                 avatar: visual.avatar,
@@ -220,7 +117,7 @@ impl ReportService {
     }
 
     pub async fn send_room_report(&self, http: &Http, now: Instant, now_timestamp: Timestamp, room: &RoomDTO) -> ReportServiceResult<()> {
-        let timeline = self.create_timeline(now, now_timestamp, room, 64).await?;
+        let timeline = self.create_timeline(now, now_timestamp, room).await?;
 
         let renderer = self.renderer.clone();
 

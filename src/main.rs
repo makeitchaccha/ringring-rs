@@ -14,6 +14,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
 use tracing::{debug, error};
+use ringring_rs::service::asset::AssetService;
 
 const CLEANUP_INTERVAL_SECS: u64 = 30;
 
@@ -35,7 +36,7 @@ async fn main() {
 
     // Create a new instance of the Client, logging in as a bot.
     let room_manager = Arc::new(RoomManager::new(16));
-    let report_service = Arc::new(ReportService::new(reqwest::Client::new(), report_channel_id));
+    let report_service = Arc::new(ReportService::new(AssetService::new(reqwest::Client::new()), report_channel_id));
     let handler = Handler {
         room_manager: room_manager.clone(),
         report_service: report_service.clone(),
