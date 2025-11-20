@@ -155,7 +155,7 @@ impl ReportService {
                             .attachments(EditAttachments::new().add(CreateAttachment::bytes(encoded_image, "thumbnail.png"))),
                     )
                     .await {
-                    Ok(message) => Ok(()),
+                    Ok(_) => Ok(()),
                     Err(err) => Err(ReportServiceError::GenericError(err.to_string())),
                 }
             },
