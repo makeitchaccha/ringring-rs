@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use crate::model::{Activity, Participant, Room};
 use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
 use crate::service::renderer::view::{FillStyle, VoiceSection, StreamingSection, Timeline, TimelineEntry, Tick};
@@ -19,6 +18,7 @@ use tiny_skia::{Color, Pixmap};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing::error;
+use crate::service::tracker::Tracker;
 
 #[derive(Debug)]
 pub enum ReportServiceError{
@@ -42,44 +42,12 @@ struct EntryVisual {
     pub streaming_color: Color,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Track {
-    pub message_id: MessageId,
-    pub last_updated_at: Instant,
-}
-
-struct ReportTracker {
-    tracks: HashMap<ChannelId, Track>
-}
-
-impl ReportTracker {
-    fn new() -> Self {
-        ReportTracker{tracks: HashMap::new()}
-    }
-
-    pub fn add_track(&mut self, channel_id: ChannelId, message_id: MessageId) {
-        let track = Track{
-            message_id,
-            last_updated_at: Instant::now()
-        };
-        self.tracks.insert(channel_id, track);
-    }
-
-    pub fn get_track(&self, channel_id: &ChannelId) -> Option<&Track> {
-        self.tracks.get(channel_id)
-    }
-
-    pub fn remove(&mut self, channel_id: ChannelId) {
-        self.tracks.remove(&channel_id);
-    }
-}
-
 pub struct ReportService {
     client: Client,
     cache: Cache<UserId, EntryVisual>,
     renderer: Arc<TimelineRenderer>,
     report_channel_id: ChannelId,
-    tracker: Arc<Mutex<ReportTracker>>,
+    tracker: Arc<Mutex<Tracker>>,
 }
 
 #[derive(Debug, Clone)]
@@ -112,7 +80,7 @@ impl ReportService {
             cache: Cache::new(100),
             renderer: Arc::new(TimelineRenderer::new()),
             report_channel_id,
-            tracker: Arc::new(Mutex::new(ReportTracker::new())),
+            tracker: Arc::new(Mutex::new(Tracker::new())),
         }
     }
 
