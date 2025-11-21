@@ -39,6 +39,7 @@ pub struct ReportService {
 pub struct RoomDTO {
     pub created_at: Instant,
     pub timestamp: Timestamp,
+    pub guild_id: GuildId,
     pub channel_id: ChannelId,
     pub participants: Vec<Participant>,
 }
@@ -52,6 +53,7 @@ impl RoomDTO {
         RoomDTO {
             created_at: room.created_at(),
             timestamp: room.timestamp(),
+            guild_id: room.guild_id(),
             channel_id: room.channel_id(),
             participants,
         }
@@ -75,7 +77,7 @@ impl ReportService {
 
         for participant in &room.participants {
             let visual =
-                match self.asset_service.get_members_visual(0.into(), participant.user_id(), participant.face()).await {
+                match self.asset_service.get_members_visual(room.guild_id, participant.user_id(), participant.face()).await {
                     Ok(visual) => visual,
                     Err(err) => {
                         error!("An error occurred while fetching member visual: {:?}", err);
