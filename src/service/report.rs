@@ -1,20 +1,11 @@
 use crate::model::{Activity, Participant, Room};
 use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
 use crate::service::renderer::view::{FillStyle, VoiceSection, StreamingSection, Timeline, TimelineEntry, Tick};
-use image::imageops::FilterType;
-use image::{imageops, ImageFormat, ImageReader};
-use kmeans_colors::{get_kmeans, Kmeans, Sort};
-use moka::future::Cache;
-use palette::cast::from_component_slice;
-use palette::{FromColor, IntoColor, Lab, Srgba};
-use reqwest::Client;
-use serenity::all::{ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, Http, MessageFlags, MessageId, Timestamp, UserId};
-use std::io::{BufReader, Cursor};
+use serenity::all::{ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, GuildId, Http, MessageFlags, Timestamp, UserId};
 use std::ops::Add;
 use std::sync::{Arc};
 use std::time::Duration;
 use chrono::Local;
-use tiny_skia::{Color, Pixmap};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing::error;
@@ -83,7 +74,6 @@ impl ReportService {
         let terminated_at = calculate_auto_scale(room.created_at, now);
 
         for participant in &room.participants {
-
             let visual =
                 match self.asset_service.get_members_visual(0.into(), participant.user_id(), participant.face()).await {
                     Ok(visual) => visual,

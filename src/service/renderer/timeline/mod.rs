@@ -7,13 +7,13 @@ use crate::service::renderer::timeline::policy::AspectRatioPolicy;
 use crate::service::renderer::view::{FillStyle, Timeline};
 use crate::service::report::RoomDTO;
 use chrono::{DurationRound, TimeDelta};
-use cosmic_text::{Align, Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
+use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
 use serenity::all::{
     CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp,
     FormattedTimestampStyle, Mentionable, Timestamp,
 };
 use std::sync::{Arc, Mutex};
-use tiny_skia::{Color, FillRule, FilterQuality, IntSize, LineCap, Mask, NonZeroRect, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint, PixmapRef, Point, Rect, Shader, SpreadMode, Stroke, Transform};
+use tiny_skia::{Color, FillRule, FilterQuality, IntSize, LineCap, Mask, NonZeroRect, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint, PixmapRef, Rect, Shader, SpreadMode, Stroke, Transform};
 use tokio::time::Instant;
 use tracing::debug;
 
