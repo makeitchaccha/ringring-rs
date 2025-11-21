@@ -25,6 +25,12 @@ impl Tracker {
         self.tracks.insert(channel_id, track);
     }
 
+    pub fn update_track(&mut self, channel_id: ChannelId) {
+        if let Some(track) = self.tracks.get_mut(&channel_id) {
+            track.last_updated_at = Instant::now();
+        }
+    }
+
     pub fn get_track(&self, channel_id: &ChannelId) -> Option<&Track> {
         self.tracks.get(channel_id)
     }

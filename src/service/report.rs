@@ -131,6 +131,10 @@ impl ReportService {
 
         match tracker_guard.get_track(&room.channel_id) {
             Some(track) => {
+                if track.last_updated_at + Duration::from_secs(20) > now {
+                    return Ok(())
+                }
+
                 match self.report_channel_id
                     .edit_message(
                         http,
@@ -145,7 +149,10 @@ impl ReportService {
                             .attachments(EditAttachments::new().add(CreateAttachment::bytes(encoded_image, "thumbnail.png"))),
                     )
                     .await {
-                    Ok(_) => Ok(()),
+                    Ok(_) => {
+                        tracker_guard.update_track(room.channel_id);
+                        Ok(())
+                    },
                     Err(err) => Err(ReportServiceError::GenericError(err.to_string())),
                 }
             },
