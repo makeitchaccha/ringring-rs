@@ -75,7 +75,6 @@ async fn main() {
                     RoomDTO::from_room(&room)
                 };
                 let now = Instant::now();
-                let now_timestamp = Timestamp::now();
                 match reporter.send_room_report(&http, now, &room_dto).await{
                     Ok(_) => {},
                     Err(e) => {
