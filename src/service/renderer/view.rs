@@ -65,7 +65,6 @@ pub struct Timeline {
     pub created_at: Instant,
     pub terminated_at: Instant,
     pub created_timestamp: DateTime<Local>,
-    pub terminated_timestamp: DateTime<Local>,
     pub tick: Tick,
     pub indicator: Option<Instant>,
     pub entries: Vec<TimelineEntry>,

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::model::{Activity, Participant, Room};
 use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
 use crate::service::renderer::view::{FillStyle, VoiceSection, StreamingSection, Timeline, TimelineEntry, Tick};
@@ -9,13 +10,15 @@ use chrono::Local;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing::error;
-use crate::service::asset::AssetService;
+use crate::service::asset::{AssetError, AssetService};
+use crate::service::renderer::transformer::transform;
 use crate::service::tracker::Tracker;
 
 #[derive(Debug)]
 pub enum ReportServiceError{
     GenericError(String),
     RenderingError(TimelineRendererError),
+    AssetError(Arc<AssetError>),
 }
 
 impl From<TimelineRendererError> for ReportServiceError {
@@ -70,46 +73,24 @@ impl ReportService {
         }
     }
 
-    async fn create_timeline(&self, now: Instant, now_timestamp: Timestamp, room: &RoomDTO) -> ReportServiceResult<Timeline> {
-        let mut entries = Vec::new();
-
-        let terminated_at = calculate_auto_scale(room.created_at, now);
+    async fn create_timeline(&self, now: Instant, room: &RoomDTO) -> ReportServiceResult<Timeline> {
+        let mut visuals = HashMap::new();
 
         for participant in &room.participants {
             let visual =
                 match self.asset_service.get_members_visual(room.guild_id, participant.user_id(), participant.face()).await {
                     Ok(visual) => visual,
-                    Err(err) => {
-                        error!("An error occurred while fetching member visual: {:?}", err);
-                        continue;
-                    }
+                    Err(err) => return Err(ReportServiceError::AssetError(err)),
                 };
 
-            entries.push(TimelineEntry{
-                avatar: visual.avatar,
-                voice_sections: convert_to_voice_sections(room.created_at, now, terminated_at, participant.history()),
-                streaming_sections: convert_to_streaming_sections(room.created_at, now, terminated_at, participant.history()),
-                active_color: visual.active_color,
-                inactive_color: visual.inactive_color,
-                streaming_color: visual.streaming_color,
-            });
+            visuals.insert(participant.user_id(), visual);
         }
 
-        let timeline = Timeline{
-            created_at: room.created_at,
-            terminated_at,
-            created_timestamp: room.timestamp.with_timezone(&Local),
-            terminated_timestamp: now_timestamp.with_timezone(&Local),
-            indicator: Some(now),
-            entries,
-            tick: choose_suitable_tics(terminated_at - room.created_at),
-        };
-
-        Ok(timeline)
+        Ok(transform(now, room, &visuals))
     }
 
-    pub async fn send_room_report(&self, http: &Http, now: Instant, now_timestamp: Timestamp, room: &RoomDTO) -> ReportServiceResult<()> {
-        let timeline = self.create_timeline(now, now_timestamp, room).await?;
+    pub async fn send_room_report(&self, http: &Http, now: Instant, room: &RoomDTO) -> ReportServiceResult<()> {
+        let timeline = self.create_timeline(now, room).await?;
 
         let renderer = self.renderer.clone();
 
@@ -182,137 +163,4 @@ impl ReportService {
         }
 
     }
-}
-
-fn convert_to_voice_sections(start: Instant, now: Instant, end: Instant, history: &Vec<Activity>) -> Vec<VoiceSection> {
-    let duration_sec = (end - start).as_secs_f32();
-    let mut render_sections = Vec::new();
-
-    for i in 0..history.len() {
-        let current = &history[i];
-        let fill_style = FillStyle::from_flags(current.flags());
-
-        let start_ratio = (current.start() - start).as_secs_f32()/duration_sec;
-        let end_ratio = (current.end().unwrap_or(now) - start).as_secs_f32()/duration_sec;
-
-        render_sections.push(VoiceSection {
-            start_ratio,
-            end_ratio,
-            fill_style,
-        })
-    }
-
-    render_sections
-}
-
-fn convert_to_streaming_sections(start: Instant, now: Instant, end: Instant, history: &Vec<Activity>) -> Vec<StreamingSection> {
-    let duration_sec = (end - start).as_secs_f32();
-    let mut streaming_sections = Vec::new();
-
-    // Always keep streaming start activity.
-    let mut streaming_start_activity: Option<&Activity> = None;
-
-    for i in 0..history.len() {
-        let current_activity = &history[i];
-
-        // update current streaming start
-        match streaming_start_activity {
-            Some(streaming_start) => {
-                if !current_activity.flags().is_sharing_screen {
-                    let start_ratio = (streaming_start.start() - start).as_secs_f32()/duration_sec;
-                    let end_ratio = (current_activity.start() - start).as_secs_f32()/duration_sec;
-
-                    streaming_sections.push(StreamingSection{
-                        start_ratio,
-                        end_ratio,
-                    });
-
-                    streaming_start_activity = None;
-                }
-            },
-            None => {
-                if current_activity.flags().is_sharing_screen {
-                    streaming_start_activity = Some(&history[i]);
-                }
-            }
-        }
-
-        // detect disconnection from voice channel
-        if let Some(streaming_start) = &streaming_start_activity {
-            let terminated = if i == history.len() - 1 {
-                true
-            } else {
-                !history[i+1].is_following(current_activity)
-            };
-
-            if terminated {
-                let start_ratio = (streaming_start.start() - start).as_secs_f32()/duration_sec;
-                let end_ratio = (current_activity.end().unwrap_or(now) - start).as_secs_f32()/duration_sec;
-
-                streaming_sections.push(StreamingSection{
-                    start_ratio,
-                    end_ratio,
-                });
-                streaming_start_activity = None;
-            }
-        }
-    }
-
-    streaming_sections
-}
-
-fn calculate_auto_scale(start: Instant, end: Instant) -> Instant {
-    const FRAMES: [Duration; 12] = [
-        Duration::from_mins(1),
-        Duration::from_mins(5),
-        Duration::from_mins(10),
-        Duration::from_mins(30),
-        Duration::from_hours(1),
-        Duration::from_hours(2),
-        Duration::from_hours(3),
-        Duration::from_hours(4),
-        Duration::from_hours(6),
-        Duration::from_hours(8),
-        Duration::from_hours(12),
-        Duration::from_hours(24),
-    ];
-
-    let duration = end - start;
-
-    for frame in FRAMES {
-        if duration < frame {
-            return start.add(frame);
-        }
-    }
-
-    let duration_days = duration.as_secs() / (24 * 60 * 60);
-
-    start.add(Duration::from_hours(24 * (1 + duration_days)))
-}
-
-fn choose_suitable_tics(duration: Duration) -> Tick {
-    const TICKS: [Tick; 12] = [
-        Tick::secs_grain(10),
-        Tick::mins_grain(1),
-        Tick::mins_grain(2),
-        Tick::mins_grain(5),
-        Tick::mins_grain(10),
-        Tick::mins_grain(15),
-        Tick::mins_grain(30),
-        Tick::hours_grain(1),
-        Tick::hours_grain(2),
-        Tick::hours_grain(4),
-        Tick::hours_grain(6),
-        Tick::hours_grain(12),
-    ];
-
-    let duration_secs = duration.as_secs();
-
-    for tick in TICKS {
-        if duration_secs / tick.interval.as_secs() < 10 {
-            return tick;
-        }
-    }
-
-    Tick::hours_grain(24)
 }

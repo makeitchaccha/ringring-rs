@@ -80,7 +80,7 @@ async fn main() {
                 };
                 let now = Instant::now();
                 let now_timestamp = Timestamp::now();
-                match reporter.send_room_report(&http, now, now_timestamp, &room_dto).await{
+                match reporter.send_room_report(&http, now, &room_dto).await{
                     Ok(_) => {},
                     Err(e) => {
                         error!("Error sending room report: {:?}", e);
@@ -190,7 +190,7 @@ impl EventHandler for Handler {
             match handle_connect_safely(&manager, now, timestamp, new).await {
                 Ok(room) => {
                     let room = room.lock().await;
-                    if let Err(err) = self.report_service.send_room_report(ctx.http(), now, timestamp, &RoomDTO::from_room(&room)).await {
+                    if let Err(err) = self.report_service.send_room_report(ctx.http(), now, &RoomDTO::from_room(&room)).await {
                         error!("Error sending room report: {:?}", err);
                     }
                 },
@@ -216,7 +216,7 @@ impl EventHandler for Handler {
         match handle_connect_safely(&manager, now, timestamp, new).await {
             Ok(room) => {
                 let room = room.lock().await;
-                if let Err(err) = self.report_service.send_room_report(ctx.http(), now, timestamp, &RoomDTO::from_room(&room)).await {
+                if let Err(err) = self.report_service.send_room_report(ctx.http(), now, &RoomDTO::from_room(&room)).await {
                     error!("Error sending room report: {:?}", err);
                 }
             },
