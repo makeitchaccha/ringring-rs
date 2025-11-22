@@ -42,21 +42,21 @@ async fn main() {
         .await
         .expect("Err creating client");
 
-    // let manager = room_manager.clone();
-    // tokio::spawn(async move {
-    //     let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
-    //
-    //     interval.tick().await;
-    //
-    //     loop {
-    //         interval.tick().await;
-    //
-    //         let now = Instant::now();
-    //         if let Err(e) = manager.cleanup(now).await {
-    //             error!("Error during room cleanup: {:?}", e);
-    //         }
-    //     }
-    // });
+    let manager = room_manager.clone();
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
+
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+
+            let now = Instant::now();
+            if let Err(e) = manager.cleanup(now).await {
+                error!("Error during room cleanup: {:?}", e);
+            }
+        }
+    });
 
     let manager = room_manager.clone();
     let reporter = report_service.clone();
