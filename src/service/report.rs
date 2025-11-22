@@ -31,7 +31,7 @@ pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
 pub struct ReportService {
     asset_service: AssetService,
     renderer: Arc<TimelineRenderer>,
-    report_channel_id: ChannelId,
+    report_channel_id: Option<ChannelId>,
     tracker: Arc<Mutex<Tracker>>,
 }
 
@@ -61,7 +61,7 @@ impl RoomDTO {
 }
 
 impl ReportService {
-    pub fn new(asset_service: AssetService, report_channel_id: ChannelId) -> Self {
+    pub fn new(asset_service: AssetService, report_channel_id: Option<ChannelId>) -> Self {
         Self{
             asset_service,
             renderer: Arc::new(TimelineRenderer::new()),
@@ -109,13 +109,15 @@ impl ReportService {
 
         let mut tracker_guard = self.tracker.lock().await;
 
+        let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id.clone());
+
         match tracker_guard.get_track(&room.channel_id) {
             Some(track) => {
                 if track.last_updated_at + Duration::from_secs(20) > now {
                     return Ok(())
                 }
 
-                match self.report_channel_id
+                match report_channel_id
                     .edit_message(
                         http,
                         track.message_id,
@@ -137,7 +139,7 @@ impl ReportService {
                 }
             },
             None => {
-                match self.report_channel_id
+                match report_channel_id
                     .send_message(
                         http,
                         CreateMessage::new()

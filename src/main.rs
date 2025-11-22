@@ -12,7 +12,7 @@ use std::env;
 use std::sync::Arc;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
-use tracing::error;
+use tracing::{error,};
 
 const CLEANUP_INTERVAL_SECS: u64 = 30;
 
@@ -23,11 +23,17 @@ async fn main() {
     // Login with a bot token from the environment
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
 
-    let report_channel_id = {
-        let string_id = env::var("REPORT_CHANNEL_ID").expect("Expected a report channel id in the environment");
-        let id = string_id.parse::<u64>().unwrap();
-        ChannelId::new(id)
-    };
+    let report_channel_id = env::var("REPORT_CHANNEL_ID").ok()
+        .and_then(|string_id| {
+            match string_id.parse::<u64>() {
+                Ok(id) => Some(id),
+                Err(err) => {
+                    error!("failed to parse REPORT_CHANNEL_ID({}): {}", string_id, err);
+                    std::process::exit(1);
+                },
+            }
+        })
+        .map(ChannelId::new);
 
     // Set gateway intents, which decides what events the bot will be notified about
     let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;
