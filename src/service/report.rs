@@ -1,18 +1,15 @@
-use std::collections::HashMap;
-use crate::model::{Activity, Participant, Room};
+use crate::model::{Participant, Room};
+use crate::service::asset::{AssetError, AssetService};
 use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
-use crate::service::renderer::view::{FillStyle, VoiceSection, StreamingSection, Timeline, TimelineEntry, Tick};
-use serenity::all::{ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, GuildId, Http, MessageFlags, Timestamp, UserId};
-use std::ops::Add;
-use std::sync::{Arc};
+use crate::service::renderer::transformer::transform;
+use crate::service::renderer::view::Timeline;
+use crate::service::tracker::Tracker;
+use serenity::all::{ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, GuildId, Http, MessageFlags, Timestamp};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
-use chrono::Local;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
-use tracing::error;
-use crate::service::asset::{AssetError, AssetService};
-use crate::service::renderer::transformer::transform;
-use crate::service::tracker::Tracker;
 
 #[derive(Debug)]
 pub enum ReportServiceError{

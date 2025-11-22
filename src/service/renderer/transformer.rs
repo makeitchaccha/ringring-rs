@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use std::ops::Add;
-use std::time::Duration;
-use chrono::{DateTime, Local};
-use serenity::all::UserId;
-use tokio::time::Instant;
 use crate::model::Activity;
 use crate::service::asset::MemberVisual;
 use crate::service::renderer::view::{FillStyle, StreamingSection, Tick, Timeline, TimelineEntry, VoiceSection};
 use crate::service::report::RoomDTO;
+use chrono::Local;
+use serenity::all::UserId;
+use std::collections::HashMap;
+use std::ops::Add;
+use std::time::Duration;
+use tokio::time::Instant;
 
 pub fn transform(now: Instant, room: &RoomDTO, visuals: &HashMap<UserId, MemberVisual>) -> Timeline {
     let terminated_at = calculate_auto_scale(room.created_at, now);

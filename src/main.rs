@@ -2,20 +2,17 @@
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-use ringring_rs::model::{Room, RoomManager};
+use ringring_rs::handler::voice::VoiceHandler;
+use ringring_rs::model::RoomManager;
+use ringring_rs::service::asset::AssetService;
 use ringring_rs::service::report::{ReportService, RoomDTO};
-use serenity::all::{ChannelId, GuildId, Timestamp, VoiceState};
-use serenity::async_trait;
-use serenity::model::channel::Message;
+use serenity::all::{ChannelId, Timestamp};
 use serenity::prelude::*;
 use std::env;
 use std::sync::Arc;
-use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
-use tracing::{debug, error};
-use ringring_rs::handler::voice::VoiceHandler;
-use ringring_rs::service::asset::AssetService;
+use tracing::error;
 
 const CLEANUP_INTERVAL_SECS: u64 = 30;
 
