@@ -1,4 +1,5 @@
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId};
+use thiserror::Error;
 use tokio::time::Instant;
 use tracing::debug;
 use crate::model::activity::{ActivityError, VoiceStateFlags};
@@ -6,10 +7,15 @@ use crate::model::participant::Participant;
 
 const IDLE_TIMEOUT_SECS: u64 = 60;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum RoomError {
+    #[error("Failed to find participant")]
     ParticipantNotFound,
-    Activity(ActivityError),
+
+    #[error("Failed to process activity: {0}")]
+    Activity(#[from] ActivityError),
+
+    #[error("Room has been already disposed.")]
     AlreadyDisposed
 }
 
@@ -30,12 +36,6 @@ pub struct Room {
 }
 
 pub type RoomResult<T> = Result<T, RoomError>;
-
-impl From<ActivityError> for RoomError {
-    fn from(err: ActivityError) -> Self {
-        RoomError::Activity(err)
-    }
-}
 
 impl Room {
     pub fn new(guild_id: GuildId, channel_id: ChannelId, created_at: Instant, timestamp: Timestamp) -> Self {

@@ -1,11 +1,17 @@
 use std::time::Duration;
 use serenity::all::VoiceState;
+use thiserror::Error;
 use tokio::time::Instant;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum ActivityError {
+    #[error("Activity has already started")]
     AlreadyStarted,
+
+    #[error("Activity has already ended")]
     AlreadyEnded,
+
+    #[error("No activity found")]
     NoActiveActivity,
 }
 

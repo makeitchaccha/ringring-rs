@@ -8,20 +8,20 @@ use serenity::all::{ChannelId, CreateAttachment, CreateMessage, EditAttachments,
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum ReportServiceError{
+    #[error("generic error: {0}")]
     GenericError(String),
-    RenderingError(TimelineRendererError),
-    AssetError(Arc<AssetError>),
-}
 
-impl From<TimelineRendererError> for ReportServiceError {
-    fn from(err: TimelineRendererError) -> Self {
-        ReportServiceError::RenderingError(err)
-    }
+    #[error(transparent)]
+    RenderingError(#[from] TimelineRendererError),
+
+    #[error(transparent)]
+    AssetError(#[from] Arc<AssetError>),
 }
 
 pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
@@ -74,11 +74,7 @@ impl ReportService {
         let mut visuals = HashMap::new();
 
         for participant in &room.participants {
-            let visual =
-                match self.asset_service.get_members_visual(room.guild_id, participant.user_id(), participant.face()).await {
-                    Ok(visual) => visual,
-                    Err(err) => return Err(ReportServiceError::AssetError(err)),
-                };
+            let visual = self.asset_service.get_members_visual(room.guild_id, participant.user_id(), participant.face()).await?;
 
             visuals.insert(participant.user_id(), visual);
         }

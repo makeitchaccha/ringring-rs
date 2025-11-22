@@ -3,6 +3,7 @@ use serenity::all::{ChannelId, GuildId, UserId};
 use std::collections::HashMap;
 use std::sync::Arc;
 use serenity::model::Timestamp;
+use thiserror::Error;
 use tokio::sync::{Mutex};
 use tokio::time::Instant;
 use tracing::debug;
@@ -12,15 +13,10 @@ pub struct RoomManager{
     num_shards: usize
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum RoomManagerError{
-    Room(RoomError)
-}
-
-impl From<RoomError> for RoomManagerError {
-    fn from(err: RoomError) -> Self {
-        RoomManagerError::Room(err)
-    }
+    #[error(transparent)]
+    Room(#[from] RoomError)
 }
 
 pub type RoomManagerResult<T> = Result<T, RoomManagerError>;

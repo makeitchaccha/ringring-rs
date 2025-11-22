@@ -7,6 +7,7 @@ use palette::{FromColor, IntoColor, Lab, Srgba};
 use serenity::all::{GuildId, UserId};
 use std::io::{BufReader, Cursor};
 use std::sync::Arc;
+use thiserror::Error;
 use tiny_skia::{Color, Pixmap};
 
 #[derive(Clone)]
@@ -17,37 +18,22 @@ pub struct MemberVisual {
     pub streaming_color: Color,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AssetError{
-    ReqwestError(reqwest::Error),
-    ImageError(image::ImageError),
-    IoError(std::io::Error),
+    #[error("Network request failed: {0}")]
+    ReqwestError(#[from] reqwest::Error),
+
+    #[error("Image processing failed: {0}")]
+    ImageError(#[from] image::ImageError),
+
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Failed to decode image")]
     DecodingError,
-    JoinError(tokio::task::JoinError),
-}
 
-impl From<reqwest::Error> for AssetError {
-    fn from(err: reqwest::Error) -> Self{
-        AssetError::ReqwestError(err)
-    }
-}
-
-impl From<image::ImageError> for AssetError {
-    fn from(err: image::ImageError) -> Self{
-        AssetError::ImageError(err)
-    }
-}
-
-impl From<std::io::Error> for AssetError {
-    fn from(err: std::io::Error) -> Self{
-        AssetError::IoError(err)
-    }
-}
-
-impl From<tokio::task::JoinError> for AssetError {
-    fn from(err: tokio::task::JoinError) -> Self{
-        AssetError::JoinError(err)
-    }
+    #[error("Async task join error: {0}")]
+    JoinError(#[from] tokio::task::JoinError),
 }
 
 pub struct AssetService {

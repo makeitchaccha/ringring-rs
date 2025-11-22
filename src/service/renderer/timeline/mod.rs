@@ -13,6 +13,7 @@ use serenity::all::{
     FormattedTimestampStyle, Mentionable, Timestamp,
 };
 use std::sync::{Arc, Mutex};
+use thiserror::Error;
 use tiny_skia::{Color, FillRule, FilterQuality, IntSize, LineCap, Mask, NonZeroRect, Paint, PathBuilder, Pattern, Pixmap, PixmapPaint, PixmapRef, Rect, Shader, SpreadMode, Stroke, Transform};
 use tokio::time::Instant;
 use tracing::debug;
@@ -29,8 +30,9 @@ const HATCH_SIZE: u32 = 10;
 const HATCH_LINE_WIDTH: f32 = 3.0;
 const MUTED_ALPHA: f32 = 0.8;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum TimelineRendererError {
+    #[error("Failed to create Pixmap")]
     PixelmapCreationError,
 }
 
