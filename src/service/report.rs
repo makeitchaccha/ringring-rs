@@ -61,16 +61,16 @@ impl RoomDTO {
 }
 
 impl ReportService {
-    pub fn new(asset_service: AssetService, tracker: Arc<Mutex<Tracker>>, report_channel_id: Option<ChannelId>) -> Self {
+    pub fn new(asset_service: AssetService, report_channel_id: Option<ChannelId>) -> Self {
         Self{
             asset_service,
             renderer: Arc::new(TimelineRenderer::new()),
             report_channel_id,
-            tracker,
+            tracker: Arc::new(Mutex::new(Tracker::new()))
         }
     }
 
-    async fn create_timeline(&self, now: Instant, room: &RoomDTO) -> ReportServiceResult<Timeline> {
+    async fn create_timeline(&self, now: Instant, room: &RoomDTO, finalized: bool) -> ReportServiceResult<Timeline> {
         let mut visuals = HashMap::new();
 
         for participant in &room.participants {
@@ -79,11 +79,11 @@ impl ReportService {
             visuals.insert(participant.user_id(), visual);
         }
 
-        Ok(transform(now, room, &visuals))
+        Ok(transform(now, room, &visuals, finalized))
     }
 
-    pub async fn send_room_report(&self, http: &Http, now: Instant, room: &RoomDTO) -> ReportServiceResult<()> {
-        let timeline = self.create_timeline(now, room).await?;
+    pub async fn send_room_report(&self, http: &Http, now: Instant, room: &RoomDTO, ongoing: bool) -> ReportServiceResult<()> {
+        let timeline = self.create_timeline(now, room, ongoing).await?;
 
         let renderer = self.renderer.clone();
 
@@ -109,7 +109,7 @@ impl ReportService {
 
         match tracker_guard.get_track(&room.channel_id) {
             Some(track) => {
-                if track.last_updated_at + Duration::from_secs(20) > now {
+                if !ongoing && track.last_updated_at + Duration::from_secs(20) > now {
                     return Ok(())
                 }
 
@@ -130,7 +130,11 @@ impl ReportService {
                     )
                     .await {
                     Ok(_) => {
-                        tracker_guard.update_track(room.channel_id);
+                        if ongoing {
+                            tracker_guard.update_track(room.channel_id);
+                        } else {
+                            tracker_guard.remove(room.channel_id);
+                        }
                         Ok(())
                     },
                     Err(err) => Err(ReportServiceError::GenericError(err.to_string())),
@@ -151,7 +155,9 @@ impl ReportService {
                     )
                     .await {
                     Ok(message) => {
-                        tracker_guard.add_track(room.channel_id, message.id);
+                        if ongoing {
+                            tracker_guard.add_track(room.channel_id, message.id);
+                        }
                         Ok(())
                     },
                     Err(err) => Err(ReportServiceError::GenericError(err.to_string())),

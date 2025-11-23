@@ -41,8 +41,7 @@ async fn main() {
 
     // Create a new instance of the Client, logging in as a bot.
     let room_manager = Arc::new(RoomManager::new(16));
-    let tracker = Arc::new(Mutex::new(Tracker::new()));
-    let report_service = Arc::new(ReportService::new(AssetService::new(reqwest::Client::new()), tracker.clone(), report_channel_id));
+    let report_service = Arc::new(ReportService::new(AssetService::new(reqwest::Client::new()), report_channel_id));
     let handler = VoiceHandler::new(room_manager.clone(), report_service.clone());
 
     let mut client = Client::builder(&token, intents)
@@ -51,6 +50,8 @@ async fn main() {
         .expect("Err creating client");
 
     let manager = room_manager.clone();
+    let http = client.http.clone();
+    let reporter = report_service.clone();
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
 
@@ -62,9 +63,16 @@ async fn main() {
             let now = Instant::now();
             match manager.cleanup(now).await {
                 Ok(removed) => {
-                    let mut tracker_guard = tracker.lock().await;
-                    for channel_id in removed {
-                        tracker_guard.remove(channel_id);
+                    for room in removed {
+                        let room_guard = room.lock().await;
+                        match reporter.send_room_report(&http, now, &RoomDTO::from_room(&room_guard), false).await {
+                            Ok(_) => {},
+                            Err(err) => {
+                                error!("Failed to send report report: {}", err);
+                                // log error and just ignore
+                                // it may be better if there is retry behavior.
+                            }
+                        }
                     }
                 },
                 Err(e) => {
@@ -91,7 +99,7 @@ async fn main() {
                     RoomDTO::from_room(&room)
                 };
                 let now = Instant::now();
-                match reporter.send_room_report(&http, now, &room_dto).await{
+                match reporter.send_room_report(&http, now, &room_dto, true).await{
                     Ok(_) => {},
                     Err(e) => {
                         error!("Error sending room report: {:?}", e);

@@ -101,7 +101,7 @@ impl EventHandler for VoiceHandler {
             match handle_connect_safely(&manager, now, timestamp, new).await {
                 Ok(room) => {
                     let room = room.lock().await;
-                    if let Err(err) = self.report_service.send_room_report(&ctx.http, now, &RoomDTO::from_room(&room)).await {
+                    if let Err(err) = self.report_service.send_room_report(&ctx.http, now, &RoomDTO::from_room(&room), true).await {
                         error!("Error sending room report: {:?}", err);
                     }
                 },
@@ -127,7 +127,7 @@ impl EventHandler for VoiceHandler {
         match handle_connect_safely(&manager, now, timestamp, new).await {
             Ok(room) => {
                 let room = room.lock().await;
-                if let Err(err) = self.report_service.send_room_report(&ctx.http, now, &RoomDTO::from_room(&room)).await {
+                if let Err(err) = self.report_service.send_room_report(&ctx.http, now, &RoomDTO::from_room(&room), true).await {
                     error!("Error sending room report: {:?}", err);
                 }
             },

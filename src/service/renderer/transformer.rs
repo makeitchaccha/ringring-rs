@@ -9,8 +9,12 @@ use std::ops::Add;
 use std::time::Duration;
 use tokio::time::Instant;
 
-pub fn transform(now: Instant, room: &RoomDTO, visuals: &HashMap<UserId, MemberVisual>) -> Timeline {
-    let terminated_at = calculate_auto_scale(room.created_at, now);
+pub fn transform(now: Instant, room: &RoomDTO, visuals: &HashMap<UserId, MemberVisual>, ongoing: bool) -> Timeline {
+    let terminated_at = if ongoing {
+        calculate_auto_scale(room.created_at, now)
+    } else {
+        now
+    };
 
     let entries = room.participants.iter().map(|p| {
         let visual = visuals.get(&p.user_id()).expect("visual must be pre-fetched before rendering.");
@@ -29,7 +33,7 @@ pub fn transform(now: Instant, room: &RoomDTO, visuals: &HashMap<UserId, MemberV
         created_at: room.created_at,
         terminated_at,
         created_timestamp: room.timestamp.with_timezone(&Local),
-        indicator: Some(now),
+        indicator: if ongoing { Some(now) } else { None },
         entries,
         tick: choose_suitable_tics(terminated_at - room.created_at),
     }

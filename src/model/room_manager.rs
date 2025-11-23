@@ -105,17 +105,17 @@ impl RoomManager {
         }
     }
 
-    pub async fn cleanup(&self, now: Instant) -> RoomManagerResult<Vec<ChannelId>> {
+    pub async fn cleanup(&self, now: Instant) -> RoomManagerResult<Vec<Arc<Mutex<Room>>>> {
         let mut before_cleanup = 0;
         let mut after_cleanup = 0;
         let mut removed = Vec::new();
         for rooms in self.shards.iter() {
             let mut rooms = rooms.lock().await;
             before_cleanup += rooms.iter().count();
-            rooms.retain(|&id, room| {
+            rooms.retain(|_, room| {
                 let has_expired = room.try_lock().map_or(false, |room| { room.has_expired(now) });
                 if has_expired {
-                    removed.push(id);
+                    removed.push(room.clone());
                 }
                 !has_expired
             });
