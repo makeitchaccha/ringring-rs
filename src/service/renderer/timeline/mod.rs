@@ -1,6 +1,7 @@
 mod policy;
 mod layout;
 
+use std::error::Error;
 use crate::model::Participant;
 use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
 use crate::service::renderer::timeline::policy::AspectRatioPolicy;
@@ -30,19 +31,19 @@ const HATCH_SIZE: u32 = 10;
 const HATCH_LINE_WIDTH: f32 = 3.0;
 const MUTED_ALPHA: f32 = 0.8;
 
-#[derive(Debug, Error)]
-pub enum TimelineRendererError {
-    #[error("Failed to create Pixmap")]
-    PixelmapCreationError,
-}
-
-pub type TimelineRendererResult<T> = Result<T, TimelineRendererError>;
-
 pub struct TimelineRenderer{
     layout_config: LayoutConfig,
     font_system: Arc<Mutex<FontSystem>>,
     swash_cache: Arc<Mutex<SwashCache>>,
 }
+
+#[derive(Error, Debug)]
+pub enum TimelineRendererError {
+    #[error("failed to encode png: {0}")]
+    PngEncoding(Box<dyn Error + Send + Sync + 'static>),
+}
+
+pub type TimelineRendererResult<T> = Result<T, TimelineRendererError>;
 
 impl TimelineRenderer {
     pub fn new() -> TimelineRenderer {
@@ -90,7 +91,7 @@ impl TimelineRenderer {
             .join("\n")
     }
 
-    pub fn generate_image(&self, timeline: &Timeline) -> TimelineRendererResult<Pixmap> {
+    pub fn generate_png_image(&self, timeline: &Timeline) -> TimelineRendererResult<Vec<u8>> {
         let n_entries = timeline.entries.len();
         let layout = self.layout_config.calculate(n_entries);
 
@@ -107,8 +108,7 @@ impl TimelineRenderer {
             avatar_mask
         };
 
-        let mut pixmap = Pixmap::new(layout.total_width() as u32, layout.total_height() as u32)
-            .ok_or(TimelineRendererError::PixelmapCreationError)?;
+        let mut pixmap = Pixmap::new(layout.total_width() as u32, layout.total_height() as u32).expect("invalid pixmap size");
         pixmap.fill(Color::WHITE);
 
         // Render ticks first.
@@ -219,7 +219,9 @@ impl TimelineRenderer {
 
         pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 
-        Ok(pixmap)
+        let image = pixmap.encode_png().map_err(|e| TimelineRendererError::PngEncoding(Box::new(e)))?;
+
+        Ok(image)
     }
 
     pub fn generate_ongoing_embed(

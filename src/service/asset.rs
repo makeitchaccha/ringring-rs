@@ -1,3 +1,4 @@
+use std::error::Error;
 use image::imageops::FilterType;
 use image::{imageops, ImageFormat, ImageReader};
 use kmeans_colors::{get_kmeans, Kmeans, Sort};
@@ -21,19 +22,19 @@ pub struct MemberVisual {
 #[derive(Debug, Error)]
 pub enum AssetError{
     #[error("Network request failed: {0}")]
-    ReqwestError(#[from] reqwest::Error),
+    Reqwest(#[from] reqwest::Error),
 
     #[error("Image processing failed: {0}")]
-    ImageError(#[from] image::ImageError),
+    Image(#[from] image::ImageError),
 
     #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
 
-    #[error("Failed to decode image")]
-    DecodingError,
+    #[error("Failed to decode image: {0}")]
+    PngDecoding(Box<dyn Error + Send + Sync + 'static>),
 
     #[error("Async task join error: {0}")]
-    JoinError(#[from] tokio::task::JoinError),
+    Join(#[from] tokio::task::JoinError),
 }
 
 pub struct AssetService {
@@ -112,10 +113,7 @@ impl AssetService {
                     Color::from_rgba(rgba_color.red, rgba_color.green, rgba_color.blue, rgba_color.alpha).unwrap()
                 };
 
-                let pixmap = match Pixmap::decode_png(&bytes){
-                    Ok(pixmap) => pixmap,
-                    Err(_) => return Err(AssetError::DecodingError),
-                };
+                let pixmap = Pixmap::decode_png(&bytes).map_err(|e| AssetError::PngDecoding(Box::new(e)))?;
 
                 Ok(MemberVisual {
                     avatar: pixmap,

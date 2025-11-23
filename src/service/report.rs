@@ -8,20 +8,25 @@ use serenity::all::{ChannelId, CreateAttachment, CreateMessage, EditAttachments,
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use serenity::prelude::SerenityError;
 use thiserror::Error;
 use tokio::sync::Mutex;
+use tokio::task::JoinError;
 use tokio::time::Instant;
 
 #[derive(Debug, Error)]
 pub enum ReportServiceError{
-    #[error("generic error: {0}")]
-    GenericError(String),
+    #[error(transparent)]
+    Rendering(#[from] TimelineRendererError),
 
     #[error(transparent)]
-    RenderingError(#[from] TimelineRendererError),
+    Asset(#[from] Arc<AssetError>),
 
-    #[error(transparent)]
-    AssetError(#[from] Arc<AssetError>),
+    #[error("")]
+    Join(#[from] JoinError),
+
+    #[error("Serenity error")]
+    Serenity(#[from] SerenityError),
 }
 
 pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
@@ -88,20 +93,11 @@ impl ReportService {
         let renderer = self.renderer.clone();
 
         let task = tokio::task::spawn_blocking(move || {
-            let pixmap = renderer.generate_image(&timeline)?;
-            let encoded_image = match pixmap.encode_png() {
-                Ok(b) => b,
-                Err(err) => {
-                    return Err(ReportServiceError::GenericError(err.to_string()))
-                }
-            };
-            Ok(encoded_image)
+            return renderer.generate_png_image(&timeline);
         });
 
-        let encoded_image = match task.await {
-            Ok(image) => image?,
-            Err(err) => return Err(ReportServiceError::GenericError(err.to_string()))
-        };
+        let encoded_image = task.await??;
+
 
         let mut tracker_guard = self.tracker.lock().await;
 
@@ -137,7 +133,7 @@ impl ReportService {
                         }
                         Ok(())
                     },
-                    Err(err) => Err(ReportServiceError::GenericError(err.to_string())),
+                    Err(err) => Err(err.into()),
                 }
             },
             None => {
@@ -160,7 +156,7 @@ impl ReportService {
                         }
                         Ok(())
                     },
-                    Err(err) => Err(ReportServiceError::GenericError(err.to_string())),
+                    Err(err) => Err(err.into()),
                 }
             }
         }
