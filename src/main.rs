@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
 use tracing::{error,};
+use ringring_rs::service::tracker::Tracker;
 
 const CLEANUP_INTERVAL_SECS: u64 = 30;
 
@@ -40,7 +41,8 @@ async fn main() {
 
     // Create a new instance of the Client, logging in as a bot.
     let room_manager = Arc::new(RoomManager::new(16));
-    let report_service = Arc::new(ReportService::new(AssetService::new(reqwest::Client::new()), report_channel_id));
+    let tracker = Arc::new(Mutex::new(Tracker::new()));
+    let report_service = Arc::new(ReportService::new(AssetService::new(reqwest::Client::new()), tracker.clone(), report_channel_id));
     let handler = VoiceHandler::new(room_manager.clone(), report_service.clone());
 
     let mut client = Client::builder(&token, intents)
@@ -58,8 +60,16 @@ async fn main() {
             interval.tick().await;
 
             let now = Instant::now();
-            if let Err(e) = manager.cleanup(now).await {
-                error!("Error during room cleanup: {:?}", e);
+            match manager.cleanup(now).await {
+                Ok(removed) => {
+                    let mut tracker_guard = tracker.lock().await;
+                    for channel_id in removed {
+                        tracker_guard.remove(channel_id);
+                    }
+                },
+                Err(e) => {
+                    error!("Error during room cleanup: {:?}", e);
+                }
             }
         }
     });

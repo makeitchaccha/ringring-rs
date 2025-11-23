@@ -61,12 +61,12 @@ impl RoomDTO {
 }
 
 impl ReportService {
-    pub fn new(asset_service: AssetService, report_channel_id: Option<ChannelId>) -> Self {
+    pub fn new(asset_service: AssetService, tracker: Arc<Mutex<Tracker>>, report_channel_id: Option<ChannelId>) -> Self {
         Self{
             asset_service,
             renderer: Arc::new(TimelineRenderer::new()),
             report_channel_id,
-            tracker: Arc::new(Mutex::new(Tracker::new())),
+            tracker,
         }
     }
 
@@ -112,6 +112,8 @@ impl ReportService {
                 if track.last_updated_at + Duration::from_secs(20) > now {
                     return Ok(())
                 }
+
+                let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id.clone());
 
                 match report_channel_id
                     .edit_message(

@@ -16,7 +16,13 @@ pub struct RoomManager{
 #[derive(Debug, Error)]
 pub enum RoomManagerError{
     #[error(transparent)]
-    Room(#[from] RoomError)
+    Room(RoomError)
+}
+
+impl From<RoomError> for RoomManagerError {
+    fn from(err: RoomError) -> Self {
+        RoomManagerError::Room(err)
+    }
 }
 
 pub type RoomManagerResult<T> = Result<T, RoomManagerError>;
@@ -99,19 +105,23 @@ impl RoomManager {
         }
     }
 
-    pub async fn cleanup(&self, now: Instant) -> RoomManagerResult<()> {
+    pub async fn cleanup(&self, now: Instant) -> RoomManagerResult<Vec<ChannelId>> {
         let mut before_cleanup = 0;
         let mut after_cleanup = 0;
+        let mut removed = Vec::new();
         for rooms in self.shards.iter() {
             let mut rooms = rooms.lock().await;
             before_cleanup += rooms.iter().count();
-            rooms.retain(|_, room| {
+            rooms.retain(|&id, room| {
                 let has_expired = room.try_lock().map_or(false, |room| { room.has_expired(now) });
+                if has_expired {
+                    removed.push(id);
+                }
                 !has_expired
             });
             after_cleanup += rooms.iter().count();
         }
         debug!("{}/{} rooms was cleaned up.", before_cleanup - after_cleanup, before_cleanup);
-        Ok(())
+        Ok(removed)
     }
 }
