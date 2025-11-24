@@ -30,7 +30,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     libfontconfig1 \
     libfreetype6 \
-    fonts-noto-core \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/ringring-rs /app/ringring-rs
