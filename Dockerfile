@@ -13,6 +13,7 @@ COPY --from=planner /app/recipe.json recipe.json
 
 # install deps to build cosmic-text
 RUN apt-get update && apt-get install -y \
+    build-essential \
     pkg-config \
     libfontconfig1-dev \
     libfreetype6-dev \
