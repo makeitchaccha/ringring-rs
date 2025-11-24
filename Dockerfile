@@ -1,12 +1,12 @@
 
-FROM rust:1.82-slim-bookworm AS planner
+FROM rust:1.91-slim-bookworm AS planner
 LABEL authors="yuyaprgrm"
 WORKDIR /app
 RUN cargo install cargo-chef
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM rust:1.82-slim-bookworm AS builder
+FROM rust:1.91-slim-bookworm AS builder
 WORKDIR /app
 RUN cargo install cargo-chef
 COPY --from=planner /app/recipe.json recipe.json
