@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libfontconfig1-dev \
     libfreetype6-dev \
+    libjemalloc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN cargo chef cook --release --recipe-path recipe.json
