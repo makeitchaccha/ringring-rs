@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y \
 RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --release --bin your-app-name
+RUN cargo build --release --bin ringring-rs
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
