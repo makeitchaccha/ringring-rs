@@ -1,6 +1,8 @@
 use crate::model::Activity;
 use crate::service::asset::MemberVisual;
-use crate::service::renderer::view::{FillStyle, StreamingSection, Tick, Timeline, TimelineEntry, VoiceSection};
+use crate::service::renderer::view::{
+    FillStyle, StreamingSection, Tick, Timeline, TimelineEntry, VoiceSection,
+};
 use crate::service::report::RoomDTO;
 use chrono::Local;
 use serenity::all::UserId;
@@ -9,27 +11,48 @@ use std::ops::Add;
 use std::time::Duration;
 use tokio::time::Instant;
 
-pub fn transform(now: Instant, room: &RoomDTO, visuals: &HashMap<UserId, MemberVisual>, ongoing: bool) -> Timeline {
+pub fn transform(
+    now: Instant,
+    room: &RoomDTO,
+    visuals: &HashMap<UserId, MemberVisual>,
+    ongoing: bool,
+) -> Timeline {
     let terminated_at = if ongoing {
         calculate_auto_scale(room.created_at, now)
     } else {
         now
     };
 
-    let entries = room.participants.iter().map(|p| {
-        let visual = visuals.get(&p.user_id()).expect("visual must be pre-fetched before rendering.");
+    let entries = room
+        .participants
+        .iter()
+        .map(|p| {
+            let visual = visuals
+                .get(&p.user_id())
+                .expect("visual must be pre-fetched before rendering.");
 
-        TimelineEntry{
-            avatar: visual.avatar.clone(),
-            voice_sections: convert_to_voice_sections(room.created_at, now, terminated_at, p.history()),
-            streaming_sections: convert_to_streaming_sections(room.created_at, now, terminated_at, p.history()),
-            active_color: visual.active_color,
-            streaming_color: visual.streaming_color,
-            inactive_color: visual.inactive_color,
-        }
-    }).collect();
+            TimelineEntry {
+                avatar: visual.avatar.clone(),
+                voice_sections: convert_to_voice_sections(
+                    room.created_at,
+                    now,
+                    terminated_at,
+                    p.history(),
+                ),
+                streaming_sections: convert_to_streaming_sections(
+                    room.created_at,
+                    now,
+                    terminated_at,
+                    p.history(),
+                ),
+                active_color: visual.active_color,
+                streaming_color: visual.streaming_color,
+                inactive_color: visual.inactive_color,
+            }
+        })
+        .collect();
 
-    Timeline{
+    Timeline {
         created_at: room.created_at,
         terminated_at,
         created_timestamp: room.timestamp.with_timezone(&Local),
@@ -38,7 +61,6 @@ pub fn transform(now: Instant, room: &RoomDTO, visuals: &HashMap<UserId, MemberV
         tick: choose_suitable_tics(terminated_at - room.created_at),
     }
 }
-
 
 fn calculate_auto_scale(start: Instant, end: Instant) -> Instant {
     const FRAMES: [Duration; 12] = [
@@ -96,17 +118,20 @@ fn choose_suitable_tics(duration: Duration) -> Tick {
     Tick::hours_grain(24)
 }
 
-
-fn convert_to_voice_sections(start: Instant, now: Instant, end: Instant, history: &Vec<Activity>) -> Vec<VoiceSection> {
+fn convert_to_voice_sections(
+    start: Instant,
+    now: Instant,
+    end: Instant,
+    history: &[Activity],
+) -> Vec<VoiceSection> {
     let duration_sec = (end - start).as_secs_f32();
     let mut render_sections = Vec::new();
 
-    for i in 0..history.len() {
-        let current = &history[i];
+    for current in history {
         let fill_style = FillStyle::from_flags(current.flags());
 
-        let start_ratio = (current.start() - start).as_secs_f32()/duration_sec;
-        let end_ratio = (current.end().unwrap_or(now) - start).as_secs_f32()/duration_sec;
+        let start_ratio = (current.start() - start).as_secs_f32() / duration_sec;
+        let end_ratio = (current.end().unwrap_or(now) - start).as_secs_f32() / duration_sec;
 
         render_sections.push(VoiceSection {
             start_ratio,
@@ -118,7 +143,12 @@ fn convert_to_voice_sections(start: Instant, now: Instant, end: Instant, history
     render_sections
 }
 
-fn convert_to_streaming_sections(start: Instant, now: Instant, end: Instant, history: &Vec<Activity>) -> Vec<StreamingSection> {
+fn convert_to_streaming_sections(
+    start: Instant,
+    now: Instant,
+    end: Instant,
+    history: &[Activity],
+) -> Vec<StreamingSection> {
     let duration_sec = (end - start).as_secs_f32();
     let mut streaming_sections = Vec::new();
 
@@ -132,17 +162,18 @@ fn convert_to_streaming_sections(start: Instant, now: Instant, end: Instant, his
         match streaming_start_activity {
             Some(streaming_start) => {
                 if !current_activity.flags().is_sharing_screen {
-                    let start_ratio = (streaming_start.start() - start).as_secs_f32()/duration_sec;
-                    let end_ratio = (current_activity.start() - start).as_secs_f32()/duration_sec;
+                    let start_ratio =
+                        (streaming_start.start() - start).as_secs_f32() / duration_sec;
+                    let end_ratio = (current_activity.start() - start).as_secs_f32() / duration_sec;
 
-                    streaming_sections.push(StreamingSection{
+                    streaming_sections.push(StreamingSection {
                         start_ratio,
                         end_ratio,
                     });
 
                     streaming_start_activity = None;
                 }
-            },
+            }
             None => {
                 if current_activity.flags().is_sharing_screen {
                     streaming_start_activity = Some(&history[i]);
@@ -155,14 +186,15 @@ fn convert_to_streaming_sections(start: Instant, now: Instant, end: Instant, his
             let terminated = if i == history.len() - 1 {
                 true
             } else {
-                !history[i+1].is_following(current_activity)
+                !history[i + 1].is_following(current_activity)
             };
 
             if terminated {
-                let start_ratio = (streaming_start.start() - start).as_secs_f32()/duration_sec;
-                let end_ratio = (current_activity.end().unwrap_or(now) - start).as_secs_f32()/duration_sec;
+                let start_ratio = (streaming_start.start() - start).as_secs_f32() / duration_sec;
+                let end_ratio =
+                    (current_activity.end().unwrap_or(now) - start).as_secs_f32() / duration_sec;
 
-                streaming_sections.push(StreamingSection{
+                streaming_sections.push(StreamingSection {
                     start_ratio,
                     end_ratio,
                 });

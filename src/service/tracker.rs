@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use serenity::all::{ChannelId, MessageId};
+use std::collections::HashMap;
 use tokio::time::Instant;
 
 #[derive(Clone, Copy, Debug)]
@@ -9,18 +9,20 @@ pub struct Track {
 }
 
 pub struct Tracker {
-    tracks: HashMap<ChannelId, Track>
+    tracks: HashMap<ChannelId, Track>,
 }
 
 impl Tracker {
     pub fn new() -> Self {
-        Tracker {tracks: HashMap::new()}
+        Tracker {
+            tracks: HashMap::new(),
+        }
     }
 
     pub fn add_track(&mut self, channel_id: ChannelId, message_id: MessageId) {
-        let track = Track{
+        let track = Track {
             message_id,
-            last_updated_at: Instant::now()
+            last_updated_at: Instant::now(),
         };
         self.tracks.insert(channel_id, track);
     }
@@ -37,5 +39,11 @@ impl Tracker {
 
     pub fn remove(&mut self, channel_id: ChannelId) {
         self.tracks.remove(&channel_id);
+    }
+}
+
+impl Default for Tracker {
+    fn default() -> Self {
+        Self::new()
     }
 }

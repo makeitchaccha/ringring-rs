@@ -4,18 +4,21 @@ use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError
 use crate::service::renderer::transformer::transform;
 use crate::service::renderer::view::Timeline;
 use crate::service::tracker::Tracker;
-use serenity::all::{ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, GuildId, Http, MessageFlags, Timestamp};
+use serenity::all::{
+    ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, GuildId, Http,
+    MessageFlags, Timestamp,
+};
+use serenity::prelude::SerenityError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use serenity::prelude::SerenityError;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::task::JoinError;
 use tokio::time::Instant;
 
 #[derive(Debug, Error)]
-pub enum ReportServiceError{
+pub enum ReportServiceError {
     #[error(transparent)]
     Rendering(#[from] TimelineRendererError),
 
@@ -30,8 +33,6 @@ pub enum ReportServiceError{
 }
 
 pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
-
-
 
 pub struct ReportService {
     asset_service: AssetService,
@@ -51,9 +52,7 @@ pub struct RoomDTO {
 
 impl RoomDTO {
     pub fn from_room(room: &Room) -> Self {
-        let participants = room.participants().iter().map(|p| {
-            p.clone()
-        }).collect();
+        let participants = room.participants().to_vec();
 
         RoomDTO {
             created_at: room.created_at(),
@@ -67,19 +66,27 @@ impl RoomDTO {
 
 impl ReportService {
     pub fn new(asset_service: AssetService, report_channel_id: Option<ChannelId>) -> Self {
-        Self{
+        Self {
             asset_service,
             renderer: Arc::new(TimelineRenderer::new()),
             report_channel_id,
-            tracker: Arc::new(Mutex::new(Tracker::new()))
+            tracker: Arc::new(Mutex::new(Tracker::new())),
         }
     }
 
-    async fn create_timeline(&self, now: Instant, room: &RoomDTO, finalized: bool) -> ReportServiceResult<Timeline> {
+    async fn create_timeline(
+        &self,
+        now: Instant,
+        room: &RoomDTO,
+        finalized: bool,
+    ) -> ReportServiceResult<Timeline> {
         let mut visuals = HashMap::new();
 
         for participant in &room.participants {
-            let visual = self.asset_service.get_members_visual(room.guild_id, participant.user_id(), participant.face()).await?;
+            let visual = self
+                .asset_service
+                .get_members_visual(room.guild_id, participant.user_id(), participant.face())
+                .await?;
 
             visuals.insert(participant.user_id(), visual);
         }
@@ -87,29 +94,32 @@ impl ReportService {
         Ok(transform(now, room, &visuals, finalized))
     }
 
-    pub async fn send_room_report(&self, http: &Http, now: Instant, room: &RoomDTO, ongoing: bool) -> ReportServiceResult<()> {
+    pub async fn send_room_report(
+        &self,
+        http: &Http,
+        now: Instant,
+        room: &RoomDTO,
+        ongoing: bool,
+    ) -> ReportServiceResult<()> {
         let timeline = self.create_timeline(now, room, ongoing).await?;
 
         let renderer = self.renderer.clone();
 
-        let task = tokio::task::spawn_blocking(move || {
-            return renderer.generate_png_image(&timeline);
-        });
+        let task = tokio::task::spawn_blocking(move || renderer.generate_png_image(&timeline));
 
         let encoded_image = task.await??;
 
-
         let mut tracker_guard = self.tracker.lock().await;
 
-        let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id.clone());
+        let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id);
 
         match tracker_guard.get_track(&room.channel_id) {
             Some(track) => {
                 if !ongoing && track.last_updated_at + Duration::from_secs(20) > now {
-                    return Ok(())
+                    return Ok(());
                 }
 
-                let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id.clone());
+                let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id);
 
                 match report_channel_id
                     .edit_message(
@@ -122,9 +132,13 @@ impl ReportService {
                                 room,
                             ))
                             .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
-                            .attachments(EditAttachments::new().add(CreateAttachment::bytes(encoded_image, "thumbnail.png"))),
+                            .attachments(
+                                EditAttachments::new()
+                                    .add(CreateAttachment::bytes(encoded_image, "thumbnail.png")),
+                            ),
                     )
-                    .await {
+                    .await
+                {
                     Ok(_) => {
                         if ongoing {
                             tracker_guard.update_track(room.channel_id);
@@ -132,10 +146,10 @@ impl ReportService {
                             tracker_guard.remove(room.channel_id);
                         }
                         Ok(())
-                    },
+                    }
                     Err(err) => Err(err.into()),
                 }
-            },
+            }
             None => {
                 match report_channel_id
                     .send_message(
@@ -149,17 +163,17 @@ impl ReportService {
                             .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
                             .add_file(CreateAttachment::bytes(encoded_image, "thumbnail.png")),
                     )
-                    .await {
+                    .await
+                {
                     Ok(message) => {
                         if ongoing {
                             tracker_guard.add_track(room.channel_id, message.id);
                         }
                         Ok(())
-                    },
+                    }
                     Err(err) => Err(err.into()),
                 }
             }
         }
-
     }
 }
