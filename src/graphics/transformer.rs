@@ -1,9 +1,9 @@
-use crate::model::Activity;
-use crate::service::asset::MemberVisual;
-use crate::service::renderer::view::{
+use crate::reporting::RoomDTO;
+use crate::room::Activity;
+use crate::infrastructure::MemberVisual;
+use crate::graphics::{
     FillStyle, StreamingSection, Tick, Timeline, TimelineEntry, VoiceSection,
 };
-use crate::service::report::RoomDTO;
 use chrono::Local;
 use serenity::all::UserId;
 use std::collections::HashMap;

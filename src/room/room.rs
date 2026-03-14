@@ -1,5 +1,5 @@
-use crate::model::activity::{ActivityError, VoiceStateFlags};
-use crate::model::participant::{Identification, Participant};
+use crate::room::activity::{ActivityError, VoiceStateFlags};
+use crate::room::participant::{Identification, Participant};
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId};
 use thiserror::Error;
 use tokio::time::Instant;
