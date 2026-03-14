@@ -6,14 +6,13 @@ use ringring_rs::handler::voice::VoiceHandler;
 use ringring_rs::model::RoomManager;
 use ringring_rs::service::asset::AssetService;
 use ringring_rs::service::report::{ReportService, RoomDTO};
-use serenity::all::{ChannelId, Timestamp};
+use serenity::all::ChannelId;
 use serenity::prelude::*;
 use std::env;
 use std::sync::Arc;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
-use tracing::{error,};
-use ringring_rs::service::tracker::Tracker;
+use tracing::error;
 
 const CLEANUP_INTERVAL_SECS: u64 = 30;
 
@@ -24,14 +23,13 @@ async fn main() {
     // Login with a bot token from the environment
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
 
-    let report_channel_id = env::var("REPORT_CHANNEL_ID").ok()
-        .and_then(|string_id| {
-            match string_id.parse::<u64>() {
-                Ok(id) => Some(id),
-                Err(err) => {
-                    error!("failed to parse REPORT_CHANNEL_ID({}): {}", string_id, err);
-                    std::process::exit(1);
-                },
+    let report_channel_id = env::var("REPORT_CHANNEL_ID")
+        .ok()
+        .map(|string_id| match string_id.parse::<u64>() {
+            Ok(id) => id,
+            Err(err) => {
+                error!("failed to parse REPORT_CHANNEL_ID({}): {}", string_id, err);
+                std::process::exit(1);
             }
         })
         .map(ChannelId::new);
@@ -41,7 +39,10 @@ async fn main() {
 
     // Create a new instance of the Client, logging in as a bot.
     let room_manager = Arc::new(RoomManager::new(16));
-    let report_service = Arc::new(ReportService::new(AssetService::new(reqwest::Client::new()), report_channel_id));
+    let report_service = Arc::new(ReportService::new(
+        AssetService::new(reqwest::Client::new()),
+        report_channel_id,
+    ));
     let handler = VoiceHandler::new(room_manager.clone(), report_service.clone());
 
     let mut client = Client::builder(&token, intents)
@@ -65,8 +66,11 @@ async fn main() {
                 Ok(removed) => {
                     for room in removed {
                         let room_guard = room.lock().await;
-                        match reporter.send_room_report(&http, now, &RoomDTO::from_room(&room_guard), false).await {
-                            Ok(_) => {},
+                        match reporter
+                            .send_room_report(&http, now, &RoomDTO::from_room(&room_guard), false)
+                            .await
+                        {
+                            Ok(_) => {}
                             Err(err) => {
                                 error!("Failed to send report report: {}", err);
                                 // log error and just ignore
@@ -74,7 +78,7 @@ async fn main() {
                             }
                         }
                     }
-                },
+                }
                 Err(e) => {
                     error!("Error during room cleanup: {:?}", e);
                 }
@@ -99,8 +103,8 @@ async fn main() {
                     RoomDTO::from_room(&room)
                 };
                 let now = Instant::now();
-                match reporter.send_room_report(&http, now, &room_dto, true).await{
-                    Ok(_) => {},
+                match reporter.send_room_report(&http, now, &room_dto, true).await {
+                    Ok(_) => {}
                     Err(e) => {
                         error!("Error sending room report: {:?}", e);
                     }

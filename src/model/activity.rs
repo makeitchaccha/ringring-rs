@@ -1,5 +1,5 @@
-use std::time::Duration;
 use serenity::all::VoiceState;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::time::Instant;
 
@@ -21,12 +21,12 @@ pub type ActivityResult<T> = Result<T, ActivityError>;
 pub struct Activity {
     start: Instant,
     end: Option<Instant>,
-    flags: VoiceStateFlags
+    flags: VoiceStateFlags,
 }
 
 impl Activity {
     pub fn start_at(start: Instant, flags: VoiceStateFlags) -> Self {
-        Activity{
+        Activity {
             start,
             end: None,
             flags,
@@ -52,7 +52,7 @@ impl Activity {
     }
 
     pub fn is_following(&self, prev: &Activity) -> bool {
-        prev.end.map_or(false, |end| {end == self.start})
+        prev.end == Some(self.start)
     }
 
     pub fn start(&self) -> Instant {
@@ -62,7 +62,7 @@ impl Activity {
     pub fn end(&self) -> Option<Instant> {
         self.end
     }
-    
+
     pub fn flags(&self) -> VoiceStateFlags {
         self.flags
     }
@@ -88,7 +88,7 @@ impl From<&VoiceState> for VoiceStateFlags {
         VoiceStateFlags {
             is_muted: state.mute || state.self_mute,
             is_deafened: state.deaf || state.self_deaf,
-            is_sharing_screen: state.self_stream.unwrap_or(false)
+            is_sharing_screen: state.self_stream.unwrap_or(false),
         }
     }
 }

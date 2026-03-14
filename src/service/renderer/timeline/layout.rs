@@ -10,11 +10,11 @@ pub struct Margin {
 }
 
 impl Margin {
-    pub fn horizontal(&self) -> f32{
+    pub fn horizontal(&self) -> f32 {
         self.left + self.right
     }
 
-    pub fn vertical(&self) -> f32{
+    pub fn vertical(&self) -> f32 {
         self.top + self.bottom
     }
 }
@@ -33,7 +33,11 @@ impl LayoutConfig {
     pub fn calculate(&self, n_entries: usize) -> Layout {
         let total_entry_height = self.entry_height * n_entries as f32;
         let total_height = self.label_area_height + total_entry_height + self.margin.vertical();
-        let timeline_width = self.aspect_ratio_policy.calculate_timeline_width(total_height, self.fixed_content_width(), self.min_timeline_width);
+        let timeline_width = self.aspect_ratio_policy.calculate_timeline_width(
+            total_height,
+            self.fixed_content_width(),
+            self.min_timeline_width,
+        );
         let total_width = timeline_width + self.fixed_content_width();
 
         Layout {
@@ -49,7 +53,7 @@ impl LayoutConfig {
         }
     }
 
-    fn fixed_content_width(&self) -> f32{
+    fn fixed_content_width(&self) -> f32 {
         self.avatar_column_width + self.margin.horizontal()
     }
 }
@@ -66,7 +70,6 @@ pub struct Layout {
     timeline_width: f32,
     avatar_size: f32,
 }
-
 
 impl Layout {
     pub fn total_width(&self) -> f32 {
@@ -87,7 +90,8 @@ impl Layout {
             self.margin.top + self.label_area_height,
             self.timeline_width,
             self.total_entry_height,
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     // returns timeline bounding-box for i-th entry.
@@ -97,7 +101,8 @@ impl Layout {
             self.margin.top + self.label_area_height + i as f32 * self.entry_height,
             self.timeline_width,
             self.entry_height,
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     // returns headline bounding-box for i-th entry.
@@ -107,6 +112,7 @@ impl Layout {
             self.margin.top + self.label_area_height + i as f32 * self.entry_height,
             self.avatar_column_width,
             self.entry_height,
-        ).unwrap()
+        )
+        .unwrap()
     }
 }

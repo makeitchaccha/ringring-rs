@@ -1,9 +1,9 @@
+use crate::model::activity::{ActivityError, VoiceStateFlags};
+use crate::model::participant::{Identification, Participant};
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId};
 use thiserror::Error;
 use tokio::time::Instant;
 use tracing::debug;
-use crate::model::activity::{ActivityError, VoiceStateFlags};
-use crate::model::participant::Participant;
 
 const IDLE_TIMEOUT_SECS: u64 = 60;
 
@@ -16,7 +16,7 @@ pub enum RoomError {
     Activity(#[from] ActivityError),
 
     #[error("Room has been already disposed.")]
-    AlreadyDisposed
+    AlreadyDisposed,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -38,7 +38,12 @@ pub struct Room {
 pub type RoomResult<T> = Result<T, RoomError>;
 
 impl Room {
-    pub fn new(guild_id: GuildId, channel_id: ChannelId, created_at: Instant, timestamp: Timestamp) -> Self {
+    pub fn new(
+        guild_id: GuildId,
+        channel_id: ChannelId,
+        created_at: Instant,
+        timestamp: Timestamp,
+    ) -> Self {
         Room {
             guild_id,
             channel_id,
@@ -69,25 +74,28 @@ impl Room {
         self.participants.as_ref()
     }
 
-    fn find_participant(&self, user_id: UserId) -> Option<&Participant> {
-        self.participants.iter().find(|part| part.user_id() == user_id)
-    }
-
     fn find_participant_mut(&mut self, user_id: UserId) -> Option<&mut Participant> {
-        self.participants.iter_mut().find(|part| part.user_id() == user_id)
+        self.participants
+            .iter_mut()
+            .find(|part| part.identification.user_id == user_id)
     }
 
-    pub fn handle_connect(&mut self, now: Instant, user_id: UserId, name: String, face: String, flags: VoiceStateFlags) -> RoomResult<()> {
+    pub fn handle_connect(
+        &mut self,
+        now: Instant,
+        identification: Identification,
+        flags: VoiceStateFlags,
+    ) -> RoomResult<()> {
         debug!("handle connect");
-        if let Some(participant) = self.find_participant_mut(user_id) {
+        if let Some(participant) = self.find_participant_mut(identification.user_id) {
             debug!("participant already exists");
             participant.connect(now, flags)?;
             self.expires_at = None;
-            return Ok(())
+            return Ok(());
         }
 
         debug!("newly connected, create participant");
-        let mut participant = Participant::new(user_id, name, face);
+        let mut participant = Participant::new(identification);
         participant.connect(now, flags)?;
         self.participants.push(participant);
         self.expires_at = None;
@@ -104,7 +112,9 @@ impl Room {
 
     pub fn handle_disconnect(&mut self, now: Instant, user_id: UserId) -> RoomResult<RoomStatus> {
         debug!("handle disconnect");
-        let participant = self.find_participant_mut(user_id).ok_or(RoomError::ParticipantNotFound)?;
+        let participant = self
+            .find_participant_mut(user_id)
+            .ok_or(RoomError::ParticipantNotFound)?;
         participant.disconnect(now)?;
         let status = self.get_status();
         if status == RoomStatus::Idle {
@@ -115,15 +125,22 @@ impl Room {
         Ok(status)
     }
 
-    pub fn handle_update(&mut self, now: Instant, user_id: UserId, flags: VoiceStateFlags) -> RoomResult<()> {
+    pub fn handle_update(
+        &mut self,
+        now: Instant,
+        user_id: UserId,
+        flags: VoiceStateFlags,
+    ) -> RoomResult<()> {
         debug!("handle update");
-        let participant = self.find_participant_mut(user_id).ok_or(RoomError::ParticipantNotFound)?;
+        let participant = self
+            .find_participant_mut(user_id)
+            .ok_or(RoomError::ParticipantNotFound)?;
         participant.update(now, flags)?;
         debug!("finish handle update");
         Ok(())
     }
 
     pub fn has_expired(&self, now: Instant) -> bool {
-        self.expires_at.map_or(false, |expires_at| now > expires_at)
+        self.expires_at.is_some_and(|expires_at| now > expires_at)
     }
 }
