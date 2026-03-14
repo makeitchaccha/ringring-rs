@@ -1,9 +1,7 @@
-use crate::model::{Participant, Room};
-use crate::service::asset::{AssetError, AssetService};
-use crate::service::renderer::timeline::{TimelineRenderer, TimelineRendererError};
-use crate::service::renderer::transformer::transform;
-use crate::service::renderer::view::Timeline;
-use crate::service::tracker::Tracker;
+use crate::graphics::{Timeline, TimelineRenderer, TimelineRendererError, transform};
+use crate::infrastructure::{AssetError, AssetService};
+use crate::reporting::Tracker;
+use crate::room::{Participant, Room};
 use serenity::all::{
     ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, GuildId, Http,
     MessageFlags, Timestamp,

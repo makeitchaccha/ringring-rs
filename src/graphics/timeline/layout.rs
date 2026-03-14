@@ -1,4 +1,4 @@
-use crate::service::renderer::timeline::policy::AspectRatioPolicy;
+use crate::graphics::AspectRatioPolicy;
 use tiny_skia::NonZeroRect;
 
 #[derive(Copy, Clone)]

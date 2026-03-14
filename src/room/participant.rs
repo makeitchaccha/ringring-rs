@@ -1,4 +1,4 @@
-use crate::model::activity::{Activity, ActivityError, ActivityResult, VoiceStateFlags};
+use crate::room::activity::{Activity, ActivityError, ActivityResult, VoiceStateFlags};
 use serenity::all::UserId;
 use std::time::Duration;
 use tokio::time::Instant;

@@ -1,11 +1,10 @@
-mod layout;
-mod policy;
+pub mod layout;
+pub mod policy;
 
-use crate::model::Participant;
-use crate::service::renderer::timeline::layout::{LayoutConfig, Margin};
-use crate::service::renderer::timeline::policy::AspectRatioPolicy;
-use crate::service::renderer::view::{FillStyle, Timeline};
-use crate::service::report::RoomDTO;
+use crate::graphics::timeline::layout::{LayoutConfig, Margin};
+use crate::graphics::{AspectRatioPolicy, FillStyle, Timeline};
+use crate::reporting::RoomDTO;
+use crate::room::Participant;
 use chrono::{DurationRound, TimeDelta};
 use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
 use serenity::all::{

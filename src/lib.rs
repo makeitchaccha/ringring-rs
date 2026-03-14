@@ -1,3 +1,5 @@
-pub mod handler;
-pub mod model;
-pub mod service;
+pub mod graphics;
+pub mod infrastructure;
+pub mod presentation;
+pub mod reporting;
+pub mod room;

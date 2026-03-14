@@ -1,5 +1,5 @@
-use crate::model::VoiceStateFlags;
-use crate::service::renderer::view::FillStyle::{Active, Deafened, Muted};
+use self::FillStyle::{Active, Deafened, Muted};
+use crate::room::VoiceStateFlags;
 use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
 use std::time::Duration;
 use tiny_skia::{Color, Pixmap};

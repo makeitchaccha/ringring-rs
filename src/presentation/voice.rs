@@ -1,5 +1,5 @@
-use crate::model::{Identification, Room, RoomManager};
-use crate::service::report::{ReportService, RoomDTO};
+use crate::reporting::{ReportService, RoomDTO};
+use crate::room::{Identification, Room, RoomManager};
 use serenity::all::{Context, EventHandler, GuildId, Timestamp, VoiceState};
 use serenity::async_trait;
 use std::sync::Arc;

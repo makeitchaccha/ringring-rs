@@ -1,5 +1,5 @@
-use crate::model::participant::Identification;
-use crate::model::{Room, RoomError, VoiceStateFlags};
+use crate::room::participant::Identification;
+use crate::room::{Room, RoomError, VoiceStateFlags};
 use serenity::all::{ChannelId, GuildId, UserId};
 use serenity::model::Timestamp;
 use std::collections::HashMap;

@@ -1,5 +1,11 @@
-use crate::model::activity::{ActivityError, VoiceStateFlags};
-use crate::model::participant::{Identification, Participant};
+pub mod activity;
+pub mod participant;
+pub mod room_manager;
+
+pub use activity::{Activity, ActivityError, ActivityResult, VoiceStateFlags};
+pub use participant::{Identification, Participant};
+pub use room_manager::RoomManager;
+
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId};
 use thiserror::Error;
 use tokio::time::Instant;
