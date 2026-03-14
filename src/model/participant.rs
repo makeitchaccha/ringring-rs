@@ -4,33 +4,24 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 #[derive(Debug, Clone)]
+pub struct Identification {
+    pub user_id: UserId,
+    pub name: String,
+    pub face: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct Participant {
-    user_id: UserId,
-    name: String,
-    face: String,
+    pub identification: Identification,
     history: Vec<Activity>,
 }
 
 impl Participant {
-    pub fn new(user_id: UserId, name: String, face: String) -> Self {
+    pub fn new(identification: Identification) -> Self {
         Participant {
-            user_id,
-            name,
-            face,
+            identification,
             history: Vec::new(),
         }
-    }
-
-    pub fn user_id(&self) -> UserId {
-        self.user_id
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn face(&self) -> &str {
-        &self.face
     }
 
     pub fn history(&self) -> &Vec<Activity> {

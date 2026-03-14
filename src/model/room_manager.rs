@@ -1,3 +1,4 @@
+use crate::model::participant::Identification;
 use crate::model::{Room, RoomError, VoiceStateFlags};
 use serenity::all::{ChannelId, GuildId, UserId};
 use serenity::model::Timestamp;
@@ -67,9 +68,7 @@ impl RoomManager {
         start: Timestamp,
         channel_id: ChannelId,
         guild_id: GuildId,
-        user_id: UserId,
-        name: String,
-        face: String,
+        identification: Identification,
         flags: VoiceStateFlags,
     ) -> RoomManagerResult<Arc<Mutex<Room>>> {
         debug!("handle connect event");
@@ -80,7 +79,7 @@ impl RoomManager {
         });
 
         let mut room = room_guard.lock().await;
-        room.handle_connect(now, user_id, name, face, flags)?;
+        room.handle_connect(now, identification, flags)?;
         Ok(room_guard.clone())
     }
 

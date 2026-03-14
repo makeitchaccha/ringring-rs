@@ -85,10 +85,14 @@ impl ReportService {
         for participant in &room.participants {
             let visual = self
                 .asset_service
-                .get_members_visual(room.guild_id, participant.user_id(), participant.face())
+                .get_members_visual(
+                    room.guild_id,
+                    participant.identification.user_id,
+                    &participant.identification.face,
+                )
                 .await?;
 
-            visuals.insert(participant.user_id(), visual);
+            visuals.insert(participant.identification.user_id, visual);
         }
 
         Ok(transform(now, room, &visuals, finalized))

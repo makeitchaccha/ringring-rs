@@ -28,7 +28,7 @@ pub fn transform(
         .iter()
         .map(|p| {
             let visual = visuals
-                .get(&p.user_id())
+                .get(&p.identification.user_id)
                 .expect("visual must be pre-fetched before rendering.");
 
             TimelineEntry {

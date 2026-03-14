@@ -1,4 +1,4 @@
-use crate::model::{Room, RoomManager};
+use crate::model::{Identification, Room, RoomManager};
 use crate::service::report::{ReportService, RoomDTO};
 use serenity::all::{Context, EventHandler, GuildId, Timestamp, VoiceState};
 use serenity::async_trait;
@@ -76,7 +76,16 @@ impl EventHandler for VoiceHandler {
                 let connect_task = async move {
                     manager_for_task
                         .handle_connect_event(
-                            now, timestamp, channel_id, guild_id, user_id, name, face, flags,
+                            now,
+                            timestamp,
+                            channel_id,
+                            guild_id,
+                            Identification {
+                                user_id,
+                                name,
+                                face,
+                            },
+                            flags,
                         )
                         .await
                 };
@@ -179,9 +188,11 @@ async fn handle_connect_safely(
             timestamp,
             channel_id,
             guild_id,
-            new.user_id,
-            name,
-            member.face(),
+            Identification {
+                user_id: new.user_id,
+                name,
+                face: member.face(),
+            },
             flags,
         )
         .await

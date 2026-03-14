@@ -1,5 +1,5 @@
 use crate::model::activity::{ActivityError, VoiceStateFlags};
-use crate::model::participant::Participant;
+use crate::model::participant::{Identification, Participant};
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId};
 use thiserror::Error;
 use tokio::time::Instant;
@@ -77,19 +77,17 @@ impl Room {
     fn find_participant_mut(&mut self, user_id: UserId) -> Option<&mut Participant> {
         self.participants
             .iter_mut()
-            .find(|part| part.user_id() == user_id)
+            .find(|part| part.identification.user_id == user_id)
     }
 
     pub fn handle_connect(
         &mut self,
         now: Instant,
-        user_id: UserId,
-        name: String,
-        face: String,
+        identification: Identification,
         flags: VoiceStateFlags,
     ) -> RoomResult<()> {
         debug!("handle connect");
-        if let Some(participant) = self.find_participant_mut(user_id) {
+        if let Some(participant) = self.find_participant_mut(identification.user_id) {
             debug!("participant already exists");
             participant.connect(now, flags)?;
             self.expires_at = None;
@@ -97,7 +95,7 @@ impl Room {
         }
 
         debug!("newly connected, create participant");
-        let mut participant = Participant::new(user_id, name, face);
+        let mut participant = Participant::new(identification);
         participant.connect(now, flags)?;
         self.participants.push(participant);
         self.expires_at = None;
