@@ -40,7 +40,7 @@ pub struct ReportService {
 }
 
 #[derive(Debug, Clone)]
-pub struct RoomDTO {
+pub struct RoomSnapshot {
     pub created_at: Instant,
     pub timestamp: Timestamp,
     pub guild_id: GuildId,
@@ -48,11 +48,11 @@ pub struct RoomDTO {
     pub participants: Vec<Participant>,
 }
 
-impl RoomDTO {
+impl RoomSnapshot {
     pub fn from_room(room: &Room) -> Self {
         let participants = room.participants().to_vec();
 
-        RoomDTO {
+        RoomSnapshot {
             created_at: room.created_at(),
             timestamp: room.timestamp(),
             guild_id: room.guild_id(),
@@ -75,7 +75,7 @@ impl ReportService {
     async fn create_timeline(
         &self,
         now: Instant,
-        room: &RoomDTO,
+        room: &RoomSnapshot,
         finalized: bool,
     ) -> ReportServiceResult<Timeline> {
         let mut visuals = HashMap::new();
@@ -100,7 +100,7 @@ impl ReportService {
         &self,
         http: &Http,
         now: Instant,
-        room: &RoomDTO,
+        room: &RoomSnapshot,
         ongoing: bool,
     ) -> ReportServiceResult<()> {
         let timeline = self.create_timeline(now, room, ongoing).await?;

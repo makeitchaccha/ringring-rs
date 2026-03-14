@@ -1,6 +1,6 @@
 use crate::graphics::{FillStyle, StreamingSection, Tick, Timeline, TimelineEntry, VoiceSection};
 use crate::infrastructure::MemberVisual;
-use crate::reporting::RoomDTO;
+use crate::reporting::RoomSnapshot;
 use crate::room::Activity;
 use chrono::Local;
 use serenity::all::UserId;
@@ -11,7 +11,7 @@ use tokio::time::Instant;
 
 pub fn transform(
     now: Instant,
-    room: &RoomDTO,
+    room: &RoomSnapshot,
     visuals: &HashMap<UserId, MemberVisual>,
     ongoing: bool,
 ) -> Timeline {

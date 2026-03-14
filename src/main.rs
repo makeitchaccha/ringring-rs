@@ -4,7 +4,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use ringring_rs::infrastructure::AssetService;
 use ringring_rs::presentation::VoiceHandler;
-use ringring_rs::reporting::{ReportService, RoomDTO};
+use ringring_rs::reporting::{ReportService, RoomSnapshot};
 use ringring_rs::room::RoomManager;
 use serenity::all::ChannelId;
 use serenity::prelude::*;
@@ -67,7 +67,12 @@ async fn main() {
                     for room in removed {
                         let room_guard = room.lock().await;
                         match reporter
-                            .send_room_report(&http, now, &RoomDTO::from_room(&room_guard), false)
+                            .send_room_report(
+                                &http,
+                                now,
+                                &RoomSnapshot::from_room(&room_guard),
+                                false,
+                            )
                             .await
                         {
                             Ok(_) => {}
@@ -100,7 +105,7 @@ async fn main() {
                 let http = http.clone();
                 let room_dto = {
                     let room = room.lock().await;
-                    RoomDTO::from_room(&room)
+                    RoomSnapshot::from_room(&room)
                 };
                 let now = Instant::now();
                 match reporter.send_room_report(&http, now, &room_dto, true).await {

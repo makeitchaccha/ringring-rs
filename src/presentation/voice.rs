@@ -1,4 +1,4 @@
-use crate::reporting::{ReportService, RoomDTO};
+use crate::reporting::{ReportService, RoomSnapshot};
 use crate::room::{Identification, Room, RoomManager};
 use serenity::all::{Context, EventHandler, GuildId, Timestamp, VoiceState};
 use serenity::async_trait;
@@ -116,7 +116,7 @@ impl EventHandler for VoiceHandler {
                     let room = room.lock().await;
                     if let Err(err) = self
                         .report_service
-                        .send_room_report(&ctx.http, now, &RoomDTO::from_room(&room), true)
+                        .send_room_report(&ctx.http, now, &RoomSnapshot::from_room(&room), true)
                         .await
                     {
                         error!("Error sending room report: {:?}", err);
@@ -146,7 +146,7 @@ impl EventHandler for VoiceHandler {
                 let room = room.lock().await;
                 if let Err(err) = self
                     .report_service
-                    .send_room_report(&ctx.http, now, &RoomDTO::from_room(&room), true)
+                    .send_room_report(&ctx.http, now, &RoomSnapshot::from_room(&room), true)
                     .await
                 {
                     error!("Error sending room report: {:?}", err);
