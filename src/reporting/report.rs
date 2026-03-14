@@ -1,5 +1,5 @@
 use crate::graphics::{Timeline, TimelineRenderer, TimelineRendererError, transform};
-use crate::infrastructure::{AssetError, AssetService};
+use crate::infrastructure::{AssetError, AssetProvider};
 use crate::reporting::Tracker;
 use crate::room::{Participant, Room};
 use serenity::all::{
@@ -33,7 +33,7 @@ pub enum ReportServiceError {
 pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
 
 pub struct ReportService {
-    asset_service: AssetService,
+    asset_service: AssetProvider,
     renderer: Arc<TimelineRenderer>,
     report_channel_id: Option<ChannelId>,
     tracker: Arc<Mutex<Tracker>>,
@@ -63,7 +63,7 @@ impl RoomSnapshot {
 }
 
 impl ReportService {
-    pub fn new(asset_service: AssetService, report_channel_id: Option<ChannelId>) -> Self {
+    pub fn new(asset_service: AssetProvider, report_channel_id: Option<ChannelId>) -> Self {
         Self {
             asset_service,
             renderer: Arc::new(TimelineRenderer::new()),

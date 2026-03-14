@@ -2,7 +2,7 @@
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-use ringring_rs::infrastructure::AssetService;
+use ringring_rs::infrastructure::AssetProvider;
 use ringring_rs::presentation::VoiceHandler;
 use ringring_rs::reporting::{ReportService, RoomSnapshot};
 use ringring_rs::room::RoomManager;
@@ -40,7 +40,7 @@ async fn main() {
     // Create a new instance of the Client, logging in as a bot.
     let room_manager = Arc::new(RoomManager::new(16));
     let report_service = Arc::new(ReportService::new(
-        AssetService::new(reqwest::Client::new()),
+        AssetProvider::new(reqwest::Client::new()),
         report_channel_id,
     ));
     let handler = VoiceHandler::new(room_manager.clone(), report_service.clone());
