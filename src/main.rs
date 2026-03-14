@@ -2,10 +2,10 @@
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+use ringring_rs::infrastructure::AssetService;
 use ringring_rs::presentation::VoiceHandler;
 use ringring_rs::reporting::{ReportService, RoomDTO};
 use ringring_rs::room::RoomManager;
-use ringring_rs::infrastructure::AssetService;
 use serenity::all::ChannelId;
 use serenity::prelude::*;
 use std::env;

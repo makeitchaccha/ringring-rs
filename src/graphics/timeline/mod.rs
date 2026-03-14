@@ -1,10 +1,10 @@
 pub mod layout;
 pub mod policy;
 
-use crate::reporting::RoomDTO;
-use crate::room::Participant;
 use crate::graphics::timeline::layout::{LayoutConfig, Margin};
 use crate::graphics::{AspectRatioPolicy, FillStyle, Timeline};
+use crate::reporting::RoomDTO;
+use crate::room::Participant;
 use chrono::{DurationRound, TimeDelta};
 use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
 use serenity::all::{

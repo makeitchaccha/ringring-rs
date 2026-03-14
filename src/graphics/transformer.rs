@@ -1,9 +1,7 @@
+use crate::graphics::{FillStyle, StreamingSection, Tick, Timeline, TimelineEntry, VoiceSection};
+use crate::infrastructure::MemberVisual;
 use crate::reporting::RoomDTO;
 use crate::room::Activity;
-use crate::infrastructure::MemberVisual;
-use crate::graphics::{
-    FillStyle, StreamingSection, Tick, Timeline, TimelineEntry, VoiceSection,
-};
 use chrono::Local;
 use serenity::all::UserId;
 use std::collections::HashMap;

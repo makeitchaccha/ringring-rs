@@ -1,3 +1,3 @@
 pub mod asset;
 
-pub use asset::{AssetService, AssetError, MemberVisual};
+pub use asset::{AssetError, AssetService, MemberVisual};
