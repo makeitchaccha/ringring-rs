@@ -50,68 +50,72 @@ async fn main() {
         .await
         .expect("Err creating client");
 
-    let manager = room_manager.clone();
-    let http = client.http.clone();
-    let reporter = reporter.clone();
-    tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
+    tokio::spawn({
+        let manager = room_manager.clone();
+        let http = client.http.clone();
+        let reporter = reporter.clone();
+        async move {
+            let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
 
-        interval.tick().await;
-
-        loop {
             interval.tick().await;
 
-            let now = Instant::now();
-            match manager.cleanup(now).await {
-                Ok(removed) => {
-                    for room in removed {
-                        let room_guard = room.lock().await;
-                        match reporter
-                            .send_room_report(
-                                &http,
-                                now,
-                                &RoomSnapshot::from_room(&room_guard),
-                                false,
-                            )
-                            .await
-                        {
-                            Ok(_) => {}
-                            Err(err) => {
-                                error!("Failed to send report report: {}", err);
-                                // log error and just ignore
-                                // it may be better if there is retry behavior.
+            loop {
+                interval.tick().await;
+
+                let now = Instant::now();
+                match manager.cleanup(now).await {
+                    Ok(removed) => {
+                        for room in removed {
+                            let room_guard = room.lock().await;
+                            match reporter
+                                .send_room_report(
+                                    &http,
+                                    now,
+                                    &RoomSnapshot::from_room(&room_guard),
+                                    false,
+                                )
+                                .await
+                            {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    error!("Failed to send report report: {}", err);
+                                    // log error and just ignore
+                                    // it may be better if there is retry behavior.
+                                }
                             }
                         }
                     }
-                }
-                Err(e) => {
-                    error!("Error during room cleanup: {:?}", e);
+                    Err(e) => {
+                        error!("Error during room cleanup: {:?}", e);
+                    }
                 }
             }
         }
     });
 
-    let manager = room_manager.clone();
-    let reporter = reporter.clone();
-    let http = client.http.clone();
-    tokio::spawn(async move {
-        let mut interval = time::interval(Duration::from_mins(1));
-        interval.tick().await;
-
-        loop {
+    tokio::spawn({
+        let manager = room_manager.clone();
+        let reporter = reporter.clone();
+        let http = client.http.clone();
+        async move {
+            let mut interval = time::interval(Duration::from_mins(1));
             interval.tick().await;
 
-            for room in manager.get_all_rooms().await {
-                let http = http.clone();
-                let snapshot = {
-                    let room = room.lock().await;
-                    RoomSnapshot::from_room(&room)
-                };
-                let now = Instant::now();
-                match reporter.send_room_report(&http, now, &snapshot, true).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("Error sending room report: {:?}", e);
+            loop {
+                interval.tick().await;
+
+                for room in manager.get_all_rooms().await {
+                    let http = http.clone();
+                    let snapshot = {
+                        let room = room.lock().await;
+                        RoomSnapshot::from_room(&room)
+                    };
+                    let now = Instant::now();
+                    match reporter.send_room_report(&http, now, &snapshot, true).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("Error sending room report: {:?}", e);
+                        }
                     }
                 }
             }
