@@ -3,7 +3,7 @@ pub mod policy;
 
 use crate::graphics::timeline::layout::{LayoutConfig, Margin};
 use crate::graphics::{AspectRatioPolicy, FillStyle, Timeline};
-use crate::reporting::RoomDTO;
+use crate::reporting::RoomSnapshot;
 use crate::room::Participant;
 use chrono::{DurationRound, TimeDelta};
 use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
@@ -318,7 +318,7 @@ impl TimelineRenderer {
         &self,
         now: Instant,
         timestamp: Timestamp,
-        room: &RoomDTO,
+        room: &RoomSnapshot,
     ) -> CreateEmbed {
         let elapsed = TimeDelta::from_std(now - room.created_at).unwrap();
 

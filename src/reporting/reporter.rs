@@ -1,6 +1,6 @@
 use crate::graphics::{Timeline, TimelineRenderer, TimelineRendererError, transform};
-use crate::infrastructure::{AssetError, AssetService};
-use crate::reporting::Tracker;
+use crate::infrastructure::{AssetError, AssetProvider};
+use crate::reporting::ReportStateStore;
 use crate::room::{Participant, Room};
 use serenity::all::{
     ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, GuildId, Http,
@@ -32,15 +32,15 @@ pub enum ReportServiceError {
 
 pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
 
-pub struct ReportService {
-    asset_service: AssetService,
+pub struct Reporter {
+    asset_provider: AssetProvider,
     renderer: Arc<TimelineRenderer>,
     report_channel_id: Option<ChannelId>,
-    tracker: Arc<Mutex<Tracker>>,
+    states: Arc<Mutex<ReportStateStore>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct RoomDTO {
+pub struct RoomSnapshot {
     pub created_at: Instant,
     pub timestamp: Timestamp,
     pub guild_id: GuildId,
@@ -48,11 +48,11 @@ pub struct RoomDTO {
     pub participants: Vec<Participant>,
 }
 
-impl RoomDTO {
+impl RoomSnapshot {
     pub fn from_room(room: &Room) -> Self {
         let participants = room.participants().to_vec();
 
-        RoomDTO {
+        RoomSnapshot {
             created_at: room.created_at(),
             timestamp: room.timestamp(),
             guild_id: room.guild_id(),
@@ -62,29 +62,29 @@ impl RoomDTO {
     }
 }
 
-impl ReportService {
-    pub fn new(asset_service: AssetService, report_channel_id: Option<ChannelId>) -> Self {
+impl Reporter {
+    pub fn new(asset_service: AssetProvider, report_channel_id: Option<ChannelId>) -> Self {
         Self {
-            asset_service,
+            asset_provider: asset_service,
             renderer: Arc::new(TimelineRenderer::new()),
             report_channel_id,
-            tracker: Arc::new(Mutex::new(Tracker::new())),
+            states: Arc::new(Mutex::new(ReportStateStore::new())),
         }
     }
 
     async fn create_timeline(
         &self,
         now: Instant,
-        room: &RoomDTO,
+        snapshot: &RoomSnapshot,
         finalized: bool,
     ) -> ReportServiceResult<Timeline> {
         let mut visuals = HashMap::new();
 
-        for participant in &room.participants {
+        for participant in &snapshot.participants {
             let visual = self
-                .asset_service
+                .asset_provider
                 .get_members_visual(
-                    room.guild_id,
+                    snapshot.guild_id,
                     participant.identification.user_id,
                     &participant.identification.face,
                 )
@@ -93,17 +93,17 @@ impl ReportService {
             visuals.insert(participant.identification.user_id, visual);
         }
 
-        Ok(transform(now, room, &visuals, finalized))
+        Ok(transform(now, snapshot, &visuals, finalized))
     }
 
     pub async fn send_room_report(
         &self,
         http: &Http,
         now: Instant,
-        room: &RoomDTO,
+        snapshot: &RoomSnapshot,
         ongoing: bool,
     ) -> ReportServiceResult<()> {
-        let timeline = self.create_timeline(now, room, ongoing).await?;
+        let timeline = self.create_timeline(now, snapshot, ongoing).await?;
 
         let renderer = self.renderer.clone();
 
@@ -111,27 +111,27 @@ impl ReportService {
 
         let encoded_image = task.await??;
 
-        let mut tracker_guard = self.tracker.lock().await;
+        let mut states_guard = self.states.lock().await;
 
-        let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id);
+        let report_channel_id = self.report_channel_id.unwrap_or(snapshot.channel_id);
 
-        match tracker_guard.get_track(&room.channel_id) {
-            Some(track) => {
-                if !ongoing && track.last_updated_at + Duration::from_secs(20) > now {
+        match states_guard.get(&snapshot.channel_id) {
+            Some(state) => {
+                if !ongoing && state.last_updated_at + Duration::from_secs(20) > now {
                     return Ok(());
                 }
 
-                let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id);
+                let report_channel_id = self.report_channel_id.unwrap_or(snapshot.channel_id);
 
                 match report_channel_id
                     .edit_message(
                         http,
-                        track.message_id,
+                        state.message_id,
                         EditMessage::new()
                             .embed(self.renderer.generate_ongoing_embed(
                                 now,
                                 Timestamp::now(),
-                                room,
+                                snapshot,
                             ))
                             .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
                             .attachments(
@@ -143,9 +143,9 @@ impl ReportService {
                 {
                     Ok(_) => {
                         if ongoing {
-                            tracker_guard.update_track(room.channel_id);
+                            states_guard.touch(snapshot.channel_id);
                         } else {
-                            tracker_guard.remove(room.channel_id);
+                            states_guard.remove(snapshot.channel_id);
                         }
                         Ok(())
                     }
@@ -160,7 +160,7 @@ impl ReportService {
                             .embed(self.renderer.generate_ongoing_embed(
                                 now,
                                 Timestamp::now(),
-                                room,
+                                snapshot,
                             ))
                             .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
                             .add_file(CreateAttachment::bytes(encoded_image, "thumbnail.png")),
@@ -169,7 +169,7 @@ impl ReportService {
                 {
                     Ok(message) => {
                         if ongoing {
-                            tracker_guard.add_track(room.channel_id, message.id);
+                            states_guard.insert(snapshot.channel_id, message.id);
                         }
                         Ok(())
                     }

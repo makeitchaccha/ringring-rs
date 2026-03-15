@@ -37,13 +37,13 @@ pub enum AssetError {
     Join(#[from] tokio::task::JoinError),
 }
 
-pub struct AssetService {
+pub struct AssetProvider {
     client: reqwest::Client,
     cache: Cache<(GuildId, UserId), MemberVisual>,
     avatar_size: u32,
 }
 
-impl AssetService {
+impl AssetProvider {
     pub fn new(client: reqwest::Client) -> Self {
         Self {
             client,
