@@ -32,7 +32,7 @@ pub enum ReportServiceError {
 
 pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
 
-pub struct ReportService {
+pub struct Reporter {
     asset_service: AssetProvider,
     renderer: Arc<TimelineRenderer>,
     report_channel_id: Option<ChannelId>,
@@ -62,7 +62,7 @@ impl RoomSnapshot {
     }
 }
 
-impl ReportService {
+impl Reporter {
     pub fn new(asset_service: AssetProvider, report_channel_id: Option<ChannelId>) -> Self {
         Self {
             asset_service,

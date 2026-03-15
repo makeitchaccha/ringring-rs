@@ -1,4 +1,4 @@
-use crate::reporting::{ReportService, RoomSnapshot};
+use crate::reporting::{Reporter, RoomSnapshot};
 use crate::room::{Identification, Room, RoomManager};
 use serenity::all::{Context, EventHandler, GuildId, Timestamp, VoiceState};
 use serenity::async_trait;
@@ -10,11 +10,11 @@ use tracing::{debug, error};
 
 pub struct VoiceHandler {
     room_manager: Arc<RoomManager>,
-    report_service: Arc<ReportService>,
+    report_service: Arc<Reporter>,
 }
 
 impl VoiceHandler {
-    pub fn new(room_manager: Arc<RoomManager>, report_service: Arc<ReportService>) -> Self {
+    pub fn new(room_manager: Arc<RoomManager>, report_service: Arc<Reporter>) -> Self {
         VoiceHandler {
             room_manager,
             report_service,
