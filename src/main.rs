@@ -39,11 +39,11 @@ async fn main() {
 
     // Create a new instance of the Client, logging in as a bot.
     let room_manager = Arc::new(RoomManager::new(16));
-    let report_service = Arc::new(Reporter::new(
+    let reporter = Arc::new(Reporter::new(
         AssetProvider::new(reqwest::Client::new()),
         report_channel_id,
     ));
-    let handler = VoiceHandler::new(room_manager.clone(), report_service.clone());
+    let handler = VoiceHandler::new(room_manager.clone(), reporter.clone());
 
     let mut client = Client::builder(&token, intents)
         .event_handler(handler)
@@ -52,7 +52,7 @@ async fn main() {
 
     let manager = room_manager.clone();
     let http = client.http.clone();
-    let reporter = report_service.clone();
+    let reporter = reporter.clone();
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
 
@@ -92,7 +92,7 @@ async fn main() {
     });
 
     let manager = room_manager.clone();
-    let reporter = report_service.clone();
+    let reporter = reporter.clone();
     let http = client.http.clone();
     tokio::spawn(async move {
         let mut interval = time::interval(Duration::from_mins(1));
@@ -103,12 +103,12 @@ async fn main() {
 
             for room in manager.get_all_rooms().await {
                 let http = http.clone();
-                let room_dto = {
+                let snapshot = {
                     let room = room.lock().await;
                     RoomSnapshot::from_room(&room)
                 };
                 let now = Instant::now();
-                match reporter.send_room_report(&http, now, &room_dto, true).await {
+                match reporter.send_room_report(&http, now, &snapshot, true).await {
                     Ok(_) => {}
                     Err(e) => {
                         error!("Error sending room report: {:?}", e);

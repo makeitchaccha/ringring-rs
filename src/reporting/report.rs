@@ -33,7 +33,7 @@ pub enum ReportServiceError {
 pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
 
 pub struct Reporter {
-    asset_service: AssetProvider,
+    asset_provider: AssetProvider,
     renderer: Arc<TimelineRenderer>,
     report_channel_id: Option<ChannelId>,
     states: Arc<Mutex<ReportStateStore>>,
@@ -65,7 +65,7 @@ impl RoomSnapshot {
 impl Reporter {
     pub fn new(asset_service: AssetProvider, report_channel_id: Option<ChannelId>) -> Self {
         Self {
-            asset_service,
+            asset_provider: asset_service,
             renderer: Arc::new(TimelineRenderer::new()),
             report_channel_id,
             states: Arc::new(Mutex::new(ReportStateStore::new())),
@@ -75,16 +75,16 @@ impl Reporter {
     async fn create_timeline(
         &self,
         now: Instant,
-        room: &RoomSnapshot,
+        snapshot: &RoomSnapshot,
         finalized: bool,
     ) -> ReportServiceResult<Timeline> {
         let mut visuals = HashMap::new();
 
-        for participant in &room.participants {
+        for participant in &snapshot.participants {
             let visual = self
-                .asset_service
+                .asset_provider
                 .get_members_visual(
-                    room.guild_id,
+                    snapshot.guild_id,
                     participant.identification.user_id,
                     &participant.identification.face,
                 )
@@ -93,17 +93,17 @@ impl Reporter {
             visuals.insert(participant.identification.user_id, visual);
         }
 
-        Ok(transform(now, room, &visuals, finalized))
+        Ok(transform(now, snapshot, &visuals, finalized))
     }
 
     pub async fn send_room_report(
         &self,
         http: &Http,
         now: Instant,
-        room: &RoomSnapshot,
+        snapshot: &RoomSnapshot,
         ongoing: bool,
     ) -> ReportServiceResult<()> {
-        let timeline = self.create_timeline(now, room, ongoing).await?;
+        let timeline = self.create_timeline(now, snapshot, ongoing).await?;
 
         let renderer = self.renderer.clone();
 
@@ -113,15 +113,15 @@ impl Reporter {
 
         let mut states_guard = self.states.lock().await;
 
-        let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id);
+        let report_channel_id = self.report_channel_id.unwrap_or(snapshot.channel_id);
 
-        match states_guard.get(&room.channel_id) {
+        match states_guard.get(&snapshot.channel_id) {
             Some(state) => {
                 if !ongoing && state.last_updated_at + Duration::from_secs(20) > now {
                     return Ok(());
                 }
 
-                let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id);
+                let report_channel_id = self.report_channel_id.unwrap_or(snapshot.channel_id);
 
                 match report_channel_id
                     .edit_message(
@@ -131,7 +131,7 @@ impl Reporter {
                             .embed(self.renderer.generate_ongoing_embed(
                                 now,
                                 Timestamp::now(),
-                                room,
+                                snapshot,
                             ))
                             .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
                             .attachments(
@@ -143,9 +143,9 @@ impl Reporter {
                 {
                     Ok(_) => {
                         if ongoing {
-                            states_guard.touch(room.channel_id);
+                            states_guard.touch(snapshot.channel_id);
                         } else {
-                            states_guard.remove(room.channel_id);
+                            states_guard.remove(snapshot.channel_id);
                         }
                         Ok(())
                     }
@@ -160,7 +160,7 @@ impl Reporter {
                             .embed(self.renderer.generate_ongoing_embed(
                                 now,
                                 Timestamp::now(),
-                                room,
+                                snapshot,
                             ))
                             .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
                             .add_file(CreateAttachment::bytes(encoded_image, "thumbnail.png")),
@@ -169,7 +169,7 @@ impl Reporter {
                 {
                     Ok(message) => {
                         if ongoing {
-                            states_guard.insert(room.channel_id, message.id);
+                            states_guard.insert(snapshot.channel_id, message.id);
                         }
                         Ok(())
                     }
