@@ -1,5 +1,5 @@
 pub mod report;
-pub mod tracker;
+pub mod state;
 
 pub use report::{Reporter, RoomSnapshot};
-pub use tracker::Tracker;
+pub use state::ReportStateStore;

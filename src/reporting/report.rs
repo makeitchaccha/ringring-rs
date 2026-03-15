@@ -1,6 +1,6 @@
 use crate::graphics::{Timeline, TimelineRenderer, TimelineRendererError, transform};
 use crate::infrastructure::{AssetError, AssetProvider};
-use crate::reporting::Tracker;
+use crate::reporting::ReportStateStore;
 use crate::room::{Participant, Room};
 use serenity::all::{
     ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, GuildId, Http,
@@ -36,7 +36,7 @@ pub struct Reporter {
     asset_service: AssetProvider,
     renderer: Arc<TimelineRenderer>,
     report_channel_id: Option<ChannelId>,
-    tracker: Arc<Mutex<Tracker>>,
+    states: Arc<Mutex<ReportStateStore>>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,7 +68,7 @@ impl Reporter {
             asset_service,
             renderer: Arc::new(TimelineRenderer::new()),
             report_channel_id,
-            tracker: Arc::new(Mutex::new(Tracker::new())),
+            states: Arc::new(Mutex::new(ReportStateStore::new())),
         }
     }
 
@@ -111,13 +111,13 @@ impl Reporter {
 
         let encoded_image = task.await??;
 
-        let mut tracker_guard = self.tracker.lock().await;
+        let mut states_guard = self.states.lock().await;
 
         let report_channel_id = self.report_channel_id.unwrap_or(room.channel_id);
 
-        match tracker_guard.get_track(&room.channel_id) {
-            Some(track) => {
-                if !ongoing && track.last_updated_at + Duration::from_secs(20) > now {
+        match states_guard.get(&room.channel_id) {
+            Some(state) => {
+                if !ongoing && state.last_updated_at + Duration::from_secs(20) > now {
                     return Ok(());
                 }
 
@@ -126,7 +126,7 @@ impl Reporter {
                 match report_channel_id
                     .edit_message(
                         http,
-                        track.message_id,
+                        state.message_id,
                         EditMessage::new()
                             .embed(self.renderer.generate_ongoing_embed(
                                 now,
@@ -143,9 +143,9 @@ impl Reporter {
                 {
                     Ok(_) => {
                         if ongoing {
-                            tracker_guard.update_track(room.channel_id);
+                            states_guard.touch(room.channel_id);
                         } else {
-                            tracker_guard.remove(room.channel_id);
+                            states_guard.remove(room.channel_id);
                         }
                         Ok(())
                     }
@@ -169,7 +169,7 @@ impl Reporter {
                 {
                     Ok(message) => {
                         if ongoing {
-                            tracker_guard.add_track(room.channel_id, message.id);
+                            states_guard.insert(room.channel_id, message.id);
                         }
                         Ok(())
                     }
