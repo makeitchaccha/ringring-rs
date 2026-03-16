@@ -9,6 +9,7 @@ use ringring_rs::room::RoomManager;
 use serenity::all::ChannelId;
 use serenity::prelude::*;
 use std::env;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::time::Instant;
 use tokio::time::{self, Duration};
@@ -23,16 +24,22 @@ async fn main() {
     // Login with a bot token from the environment
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
 
-    let report_channel_id = env::var("REPORT_CHANNEL_ID")
+    let report_channels = env::var("REPORT_CHANNELS")
         .ok()
-        .map(|string_id| match string_id.parse::<u64>() {
-            Ok(id) => id,
-            Err(err) => {
-                error!("failed to parse REPORT_CHANNEL_ID({}): {}", string_id, err);
-                std::process::exit(1);
-            }
+        .map(|channels| {
+            let channels: Vec<(String, String)> =
+                serde_json::from_str(&channels).expect("must be parse as json");
+            channels
         })
-        .map(ChannelId::new);
+        .unwrap_or(vec![])
+        .iter()
+        .map(|p| {
+            (
+                ChannelId::from_str(p.0.as_str()).expect("must be channel id"),
+                ChannelId::from_str(p.1.as_str()).expect("must be channel id"),
+            )
+        })
+        .collect();
 
     // Set gateway intents, which decides what events the bot will be notified about
     let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;
@@ -41,7 +48,7 @@ async fn main() {
     let room_manager = Arc::new(RoomManager::new(16));
     let reporter = Arc::new(Reporter::new(
         AssetProvider::new(reqwest::Client::new()),
-        report_channel_id,
+        report_channels,
     ));
     let handler = VoiceHandler::new(room_manager.clone(), reporter.clone());
 
