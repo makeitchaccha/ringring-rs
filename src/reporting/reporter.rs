@@ -35,7 +35,7 @@ pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
 pub struct Reporter {
     asset_provider: AssetProvider,
     renderer: Arc<TimelineRenderer>,
-    report_channel_id: Option<ChannelId>,
+    report_channels: HashMap<ChannelId, ChannelId>,
     states: Arc<Mutex<ReportStateStore>>,
 }
 
@@ -63,11 +63,14 @@ impl RoomSnapshot {
 }
 
 impl Reporter {
-    pub fn new(asset_service: AssetProvider, report_channel_id: Option<ChannelId>) -> Self {
+    pub fn new(
+        asset_service: AssetProvider,
+        report_channels: HashMap<ChannelId, ChannelId>,
+    ) -> Self {
         Self {
             asset_provider: asset_service,
             renderer: Arc::new(TimelineRenderer::new()),
-            report_channel_id,
+            report_channels,
             states: Arc::new(Mutex::new(ReportStateStore::new())),
         }
     }
@@ -113,15 +116,16 @@ impl Reporter {
 
         let mut states_guard = self.states.lock().await;
 
-        let report_channel_id = self.report_channel_id.unwrap_or(snapshot.channel_id);
+        let report_channel_id = self
+            .report_channels
+            .get(&snapshot.channel_id)
+            .unwrap_or(&snapshot.channel_id);
 
         match states_guard.get(&snapshot.channel_id) {
             Some(state) => {
                 if !ongoing && state.last_updated_at + Duration::from_secs(20) > now {
                     return Ok(());
                 }
-
-                let report_channel_id = self.report_channel_id.unwrap_or(snapshot.channel_id);
 
                 match report_channel_id
                     .edit_message(
