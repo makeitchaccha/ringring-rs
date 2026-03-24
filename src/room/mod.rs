@@ -1,7 +1,7 @@
-mod actor;
 mod coordinator;
 mod model;
+mod session;
 mod types;
 
-pub use actor::{RoomActor, RoomHandle, RoomMessage};
 pub use coordinator::Coordinator;
+pub use session::{Session, SessionHandle, SessionMessage};

@@ -11,29 +11,32 @@ use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tracing::{error, info};
 
-pub struct RoomHandle {
-    suspended_events: Option<Vec<RoomMessage>>,
-    tx: mpsc::UnboundedSender<RoomMessage>,
+pub struct SessionHandle {
+    suspended_events: Option<Vec<SessionMessage>>,
+    tx: mpsc::Sender<SessionMessage>,
 }
 
-impl RoomHandle {
-    pub fn new(tx: mpsc::UnboundedSender<RoomMessage>) -> Self {
+impl SessionHandle {
+    pub fn new(tx: mpsc::Sender<SessionMessage>) -> Self {
         Self {
             tx,
             suspended_events: None,
         }
     }
 
-    pub fn dispatch_or_hold(&mut self, event: RoomMessage) -> Result<(), SendError<RoomMessage>> {
+    pub async fn dispatch_or_hold(
+        &mut self,
+        event: SessionMessage,
+    ) -> Result<(), SendError<SessionMessage>> {
         match self.suspended_events.as_mut() {
             Some(queue) => queue.push(event),
-            None => self.tx.send(event)?,
+            None => self.tx.send(event).await?,
         }
         Ok(())
     }
 
-    pub fn bypass(&self, event: RoomMessage) -> Result<(), SendError<RoomMessage>> {
-        self.tx.send(event)?;
+    pub async fn bypass(&self, event: SessionMessage) -> Result<(), SendError<SessionMessage>> {
+        self.tx.send(event).await?;
         Ok(())
     }
 
@@ -43,16 +46,16 @@ impl RoomHandle {
         }
     }
 
-    pub fn resume_delivery(&mut self) -> Result<(), SendError<RoomMessage>> {
+    pub async fn resume_delivery(&mut self) -> Result<(), SendError<SessionMessage>> {
         if let Some(queue) = self.suspended_events.take() {
             for event in queue {
-                self.tx.send(event)?;
+                self.tx.send(event).await?;
             }
         }
         Ok(())
     }
 
-    pub fn reconnect(&mut self, new_rx: mpsc::UnboundedSender<RoomMessage>) {
+    pub fn reconnect(&mut self, new_rx: mpsc::Sender<SessionMessage>) {
         self.tx = new_rx;
     }
 
@@ -73,7 +76,7 @@ pub enum ShutdownReason {
     External,
 }
 
-pub enum RoomMessage {
+pub enum SessionMessage {
     Connect {
         now: Instant,
         identification: UserIdentity,
@@ -93,19 +96,19 @@ pub enum RoomMessage {
     },
 }
 
-pub struct RoomActor {
+pub struct Session {
     room: Room,
-    rx: mpsc::UnboundedReceiver<RoomMessage>,
-    coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
+    rx: mpsc::Receiver<SessionMessage>,
+    coordinator_tx: mpsc::Sender<CoordinatorInternalMessage>,
 }
 
-impl RoomActor {
+impl Session {
     pub fn new(
         room: Room,
-        rx: mpsc::UnboundedReceiver<RoomMessage>,
-        coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
-    ) -> RoomActor {
-        RoomActor {
+        rx: mpsc::Receiver<SessionMessage>,
+        coordinator_tx: mpsc::Sender<CoordinatorInternalMessage>,
+    ) -> Session {
+        Session {
             room,
             rx,
             coordinator_tx,
@@ -113,7 +116,7 @@ impl RoomActor {
     }
 
     pub async fn run(mut self) {
-        info!("Room actor started");
+        info!("Room session started");
 
         let mut idle_timer = IdleTimer::with_timeout(Duration::from_secs(60));
 
@@ -123,26 +126,26 @@ impl RoomActor {
 
                 Some(cmd) = self.rx.recv() => {
                     match cmd {
-                        RoomMessage::Connect{ now, identification, flags } => {
+                        SessionMessage::Connect{ now, identification, flags } => {
                             self.room.handle_connect(now, identification, flags).expect("invalid state");
                             idle_timer.abort();
                         }
-                        RoomMessage::Disconnect{ now, user_id } => {
+                        SessionMessage::Disconnect{ now, user_id } => {
                             let status = self.room.handle_disconnect(now, user_id).expect("invalid state");
                             if status == RoomStatus::Empty {
                                 idle_timer.start_countdown();
                             }
                         }
-                        RoomMessage::Update{ now, user_id, flags } => {
+                        SessionMessage::Update{ now, user_id, flags } => {
                             self.room.handle_update(now, user_id, flags).expect("invalid state");
                         }
 
-                        RoomMessage::RequestShutdown{ reason } => {
+                        SessionMessage::RequestShutdown{ reason } => {
                             if !self.room.is_empty() {
-                                info!("Room has requested to shutdown but is not empty. Reject shutdown.");
+                                info!("Session has requested to shutdown but is not empty. Reject shutdown.");
                                 if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
                                     channel_id: self.room.channel_id
-                                }) {
+                                }).await {
                                     error!("failed to send shutdown rejection to coordinator: {}", err);
                                     break;
                                 }
@@ -150,21 +153,21 @@ impl RoomActor {
                             }
 
                             if reason == ShutdownReason::Idle && !idle_timer.has_expired(Instant::now()) {
-                                info!("Room has requested to shutdown but is recently participant joined and then left. Reject shutdown.");
+                                info!("Session has requested to shutdown but is recently participant joined and then left. Reject shutdown.");
                                 if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
                                     channel_id: self.room.channel_id
-                                }) {
+                                }).await {
                                     error!("failed to send shutdown rejection to coordinator: {}", err);
                                     break;
                                 }
                                 continue;
                             }
 
-                            if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }){
+                            if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }).await {
                                 error!("failed to send shutdown ready to coordinator: {}", err);
                             }
 
-                            info!("Room actor is stopping...");
+                            info!("Session is stopping...");
                             break;
                         }
                     }
@@ -173,7 +176,7 @@ impl RoomActor {
                 _ = &mut idle_timer => {
                     info!("detected idle, starting idle-shutdown sequence...");
                     idle_timer.wait_for_shutdown_request();
-                    if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id }) {
+                    if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id }).await {
                         error!("failed to send idle notification to coordinator: {}", err);
                         break;
                     }
@@ -218,7 +221,7 @@ impl IdleTimer {
     }
 }
 
-impl Future for IdleTimer {
+impl std::future::Future for IdleTimer {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
