@@ -28,7 +28,7 @@ impl Coordinator {
     pub async fn run(mut self) {
         info!("Starting coordinator loop");
 
-        let (internal_tx, mut internal_rx) = mpsc::channel(128);
+        let (internal_tx, mut internal_rx) = mpsc::unbounded_channel();
 
         loop {
             select! {
@@ -50,7 +50,7 @@ impl Coordinator {
                             handle.suspend_delivery();
                             if let Err(err) = handle.bypass(RoomMessage::RequestShutdown {
                                 reason: ShutdownReason::Idle,
-                            }).await {
+                            }) {
                                 warn!("could not request shutdown: {}", err);
                                 self.rooms.remove(&channel_id);
                             }
@@ -76,7 +76,7 @@ impl Coordinator {
                                 continue;
                             };
 
-                            if let Err(err) = handle.resume_delivery().await {
+                            if let Err(err) = handle.resume_delivery() {
                                 warn!("could not resume delivery: {}", err);
                                 self.rooms.remove(&channel_id);
                             }
@@ -90,9 +90,9 @@ impl Coordinator {
 
 fn start_room_actor(
     room: Room,
-    internal_tx: mpsc::Sender<CoordinatorInternalMessage>,
-) -> mpsc::Sender<RoomMessage> {
-    let (tx, rx) = mpsc::channel(128);
+    internal_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
+) -> mpsc::UnboundedSender<RoomMessage> {
+    let (tx, rx) = mpsc::unbounded_channel();
     let actor = RoomActor::new(room, rx, internal_tx);
 
     tokio::spawn(actor.run());

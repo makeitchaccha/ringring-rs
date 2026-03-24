@@ -13,30 +13,27 @@ use tracing::{error, info};
 
 pub struct RoomHandle {
     suspended_events: Option<Vec<RoomMessage>>,
-    tx: mpsc::Sender<RoomMessage>,
+    tx: mpsc::UnboundedSender<RoomMessage>,
 }
 
 impl RoomHandle {
-    pub fn new(tx: mpsc::Sender<RoomMessage>) -> Self {
+    pub fn new(tx: mpsc::UnboundedSender<RoomMessage>) -> Self {
         Self {
             tx,
             suspended_events: None,
         }
     }
 
-    pub async fn dispatch_or_hold(
-        &mut self,
-        event: RoomMessage,
-    ) -> Result<(), SendError<RoomMessage>> {
+    pub fn dispatch_or_hold(&mut self, event: RoomMessage) -> Result<(), SendError<RoomMessage>> {
         match self.suspended_events.as_mut() {
             Some(queue) => queue.push(event),
-            None => self.tx.send(event).await?,
+            None => self.tx.send(event)?,
         }
         Ok(())
     }
 
-    pub async fn bypass(&self, event: RoomMessage) -> Result<(), SendError<RoomMessage>> {
-        self.tx.send(event).await?;
+    pub fn bypass(&self, event: RoomMessage) -> Result<(), SendError<RoomMessage>> {
+        self.tx.send(event)?;
         Ok(())
     }
 
@@ -46,16 +43,16 @@ impl RoomHandle {
         }
     }
 
-    pub async fn resume_delivery(&mut self) -> Result<(), SendError<RoomMessage>> {
+    pub fn resume_delivery(&mut self) -> Result<(), SendError<RoomMessage>> {
         if let Some(queue) = self.suspended_events.take() {
             for event in queue {
-                self.tx.send(event).await?;
+                self.tx.send(event)?;
             }
         }
         Ok(())
     }
 
-    pub fn reconnect(&mut self, new_rx: mpsc::Sender<RoomMessage>) {
+    pub fn reconnect(&mut self, new_rx: mpsc::UnboundedSender<RoomMessage>) {
         self.tx = new_rx;
     }
 
@@ -98,15 +95,15 @@ pub enum RoomMessage {
 
 pub struct RoomActor {
     room: Room,
-    rx: mpsc::Receiver<RoomMessage>,
-    coordinator_tx: mpsc::Sender<CoordinatorInternalMessage>,
+    rx: mpsc::UnboundedReceiver<RoomMessage>,
+    coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
 }
 
 impl RoomActor {
     pub fn new(
         room: Room,
-        rx: mpsc::Receiver<RoomMessage>,
-        coordinator_tx: mpsc::Sender<CoordinatorInternalMessage>,
+        rx: mpsc::UnboundedReceiver<RoomMessage>,
+        coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
     ) -> RoomActor {
         RoomActor {
             room,
@@ -145,7 +142,7 @@ impl RoomActor {
                                 info!("Room has requested to shutdown but is not empty. Reject shutdown.");
                                 if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
                                     channel_id: self.room.channel_id
-                                }).await {
+                                }) {
                                     error!("failed to send shutdown rejection to coordinator: {}", err);
                                     break;
                                 }
@@ -156,14 +153,14 @@ impl RoomActor {
                                 info!("Room has requested to shutdown but is recently participant joined and then left. Reject shutdown.");
                                 if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
                                     channel_id: self.room.channel_id
-                                }).await {
+                                }) {
                                     error!("failed to send shutdown rejection to coordinator: {}", err);
                                     break;
                                 }
                                 continue;
                             }
 
-                            if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }).await {
+                            if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }){
                                 error!("failed to send shutdown ready to coordinator: {}", err);
                             }
 
@@ -176,7 +173,7 @@ impl RoomActor {
                 _ = &mut idle_timer => {
                     info!("detected idle, starting idle-shutdown sequence...");
                     idle_timer.wait_for_shutdown_request();
-                    if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id }).await {
+                    if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id }) {
                         error!("failed to send idle notification to coordinator: {}", err);
                         break;
                     }
