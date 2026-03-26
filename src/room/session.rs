@@ -13,30 +13,30 @@ use tracing::{error, info};
 
 pub struct SessionHandle {
     suspended_events: Option<Vec<SessionMessage>>,
-    tx: mpsc::Sender<SessionMessage>,
+    tx: mpsc::UnboundedSender<SessionMessage>,
 }
 
 impl SessionHandle {
-    pub fn new(tx: mpsc::Sender<SessionMessage>) -> Self {
+    pub fn new(tx: mpsc::UnboundedSender<SessionMessage>) -> Self {
         Self {
             tx,
             suspended_events: None,
         }
     }
 
-    pub async fn dispatch_or_hold(
+    pub fn dispatch_or_hold(
         &mut self,
         event: SessionMessage,
     ) -> Result<(), SendError<SessionMessage>> {
         match self.suspended_events.as_mut() {
             Some(queue) => queue.push(event),
-            None => self.tx.send(event).await?,
+            None => self.tx.send(event)?,
         }
         Ok(())
     }
 
-    pub async fn bypass(&self, event: SessionMessage) -> Result<(), SendError<SessionMessage>> {
-        self.tx.send(event).await?;
+    pub fn bypass(&self, event: SessionMessage) -> Result<(), SendError<SessionMessage>> {
+        self.tx.send(event)?;
         Ok(())
     }
 
@@ -46,17 +46,17 @@ impl SessionHandle {
         }
     }
 
-    pub async fn resume_delivery(&mut self) -> Result<(), SendError<SessionMessage>> {
+    pub fn resume_delivery(&mut self) -> Result<(), SendError<SessionMessage>> {
         if let Some(queue) = self.suspended_events.take() {
             for event in queue {
-                self.tx.send(event).await?;
+                self.tx.send(event)?;
             }
         }
         Ok(())
     }
 
-    pub fn reconnect(&mut self, new_rx: mpsc::Sender<SessionMessage>) {
-        self.tx = new_rx;
+    pub fn reconnect(&mut self, new_tx: mpsc::UnboundedSender<SessionMessage>) {
+        self.tx = new_tx;
     }
 
     pub fn is_suspended(&self) -> bool {
@@ -98,15 +98,15 @@ pub enum SessionMessage {
 
 pub struct Session {
     room: Room,
-    rx: mpsc::Receiver<SessionMessage>,
-    coordinator_tx: mpsc::Sender<CoordinatorInternalMessage>,
+    rx: mpsc::UnboundedReceiver<SessionMessage>,
+    coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
 }
 
 impl Session {
     pub fn new(
         room: Room,
-        rx: mpsc::Receiver<SessionMessage>,
-        coordinator_tx: mpsc::Sender<CoordinatorInternalMessage>,
+        rx: mpsc::UnboundedReceiver<SessionMessage>,
+        coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
     ) -> Session {
         Session {
             room,
@@ -145,7 +145,7 @@ impl Session {
                                 info!("Session has requested to shutdown but is not empty. Reject shutdown.");
                                 if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
                                     channel_id: self.room.channel_id
-                                }).await {
+                                }) {
                                     error!("failed to send shutdown rejection to coordinator: {}", err);
                                     break;
                                 }
@@ -156,14 +156,14 @@ impl Session {
                                 info!("Session has requested to shutdown but is recently participant joined and then left. Reject shutdown.");
                                 if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
                                     channel_id: self.room.channel_id
-                                }).await {
+                                }) {
                                     error!("failed to send shutdown rejection to coordinator: {}", err);
                                     break;
                                 }
                                 continue;
                             }
 
-                            if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }).await {
+                            if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }) {
                                 error!("failed to send shutdown ready to coordinator: {}", err);
                             }
 
@@ -176,7 +176,7 @@ impl Session {
                 _ = &mut idle_timer => {
                     info!("detected idle, starting idle-shutdown sequence...");
                     idle_timer.wait_for_shutdown_request();
-                    if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id }).await {
+                    if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id }) {
                         error!("failed to send idle notification to coordinator: {}", err);
                         break;
                     }
