@@ -47,7 +47,7 @@ impl Room {
     fn find_participant_mut(&mut self, user_id: UserId) -> Option<&mut Participant> {
         self.participants
             .iter_mut()
-            .find(|part| part.identification.user_id == user_id)
+            .find(|part| part.identity.user_id == user_id)
     }
 
     pub fn handle_connect(
@@ -129,14 +129,14 @@ impl Room {
 
 #[derive(Debug, Clone)]
 pub struct Participant {
-    pub identification: UserIdentity,
+    pub identity: UserIdentity,
     pub history: Arc<Vec<Activity>>,
 }
 
 impl Participant {
-    pub fn new(identification: UserIdentity) -> Self {
+    pub fn new(identity: UserIdentity) -> Self {
         Participant {
-            identification,
+            identity,
             history: Arc::new(Vec::new()),
         }
     }
@@ -189,7 +189,7 @@ impl Participant {
 
     pub fn lease(&self) -> ParticipantLease {
         ParticipantLease {
-            identification: self.identification.clone(),
+            identity: self.identity.clone(),
             history: self.history.clone(),
         }
     }

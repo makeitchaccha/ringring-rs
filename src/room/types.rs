@@ -11,7 +11,7 @@ pub struct RoomLease {
 }
 
 pub struct ParticipantLease {
-    pub identification: UserIdentity,
+    pub identity: UserIdentity,
     pub history: Arc<Vec<Activity>>,
 }
 
