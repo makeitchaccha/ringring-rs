@@ -180,13 +180,6 @@ impl Participant {
         Ok(())
     }
 
-    pub fn calculate_duration(&self, now: Instant) -> Duration {
-        self.history
-            .iter()
-            .map(|activity| activity.calculate_duration(now))
-            .sum()
-    }
-
     pub fn lease(&self) -> ParticipantLease {
         ParticipantLease {
             identity: self.identity.clone(),

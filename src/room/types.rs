@@ -3,6 +3,7 @@ use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
 use std::sync::Arc;
 use tokio::time::Instant;
 
+#[derive(Clone)]
 pub struct RoomLease {
     pub guild_id: GuildId,
     pub channel_id: ChannelId,
@@ -10,6 +11,7 @@ pub struct RoomLease {
     pub participants: Vec<ParticipantLease>,
 }
 
+#[derive(Clone)]
 pub struct ParticipantLease {
     pub identity: UserIdentity,
     pub history: Arc<Vec<Activity>>,
@@ -17,8 +19,8 @@ pub struct ParticipantLease {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Moment {
-    wall: Timestamp,
-    mono: Instant,
+    pub wall: Timestamp,
+    pub mono: Instant,
 }
 
 impl Moment {

@@ -1,11 +1,11 @@
 use crate::room::Session;
 use crate::room::model::Room;
-use crate::room::session::{SessionHandle, SessionMessage, ShutdownReason};
+use crate::room::session::{SessionEvent, SessionHandle, SessionMessage, ShutdownReason};
 use crate::room::types::Moment;
 use serenity::all::{ChannelId, GuildId};
 use std::collections::HashMap;
 use tokio::select;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::sync::mpsc::error::SendError;
 use tracing::{error, info, warn};
 
@@ -22,12 +22,19 @@ impl CoordinatorHandle {
         self.tx.send(CoordinatorMessage::Track { channel_id, guild_id, message })
     }
 
-    pub fn notify(&self, channel_id: ChannelId, message: SessionMessage) -> Result<(), SendError<CoordinatorMessage>>{
+    pub fn notify(&self, channel_id: ChannelId, message: SessionMessage) -> Result<(), SendError<CoordinatorMessage>> {
         self.tx.send(CoordinatorMessage::Notify { channel_id, message })
     }
 }
 
-pub enum CoordinatorMessage {
+pub enum CoordinatorEvent {
+    Published{
+        channel_id: ChannelId,
+        session_event_rx: broadcast::Receiver<SessionEvent>,
+    }
+}
+
+enum CoordinatorMessage {
     Track {
         channel_id: ChannelId,
         guild_id: GuildId,
@@ -48,23 +55,46 @@ pub enum CoordinatorInternalMessage {
 pub struct Coordinator {
     sessions: HashMap<ChannelId, SessionHandle>,
     rx: mpsc::UnboundedReceiver<CoordinatorMessage>,
+    event_tx: mpsc::UnboundedSender<CoordinatorEvent>,
 }
 
 impl Coordinator {
-    pub fn new(rx: mpsc::UnboundedReceiver<CoordinatorMessage>) -> Self {
+    pub fn new(rx: mpsc::UnboundedReceiver<CoordinatorMessage>, event_tx: mpsc::UnboundedSender<CoordinatorEvent>) -> Self {
         Self {
             sessions: HashMap::new(),
             rx,
+            event_tx,
         }
     }
 
-    pub fn spawn() -> CoordinatorHandle {
+    pub fn spawn() -> (CoordinatorHandle, mpsc::UnboundedReceiver<CoordinatorEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let coordinator = Self::new(rx);
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let coordinator = Self::new(rx, event_tx);
 
         tokio::spawn(coordinator.run());
 
-        CoordinatorHandle::new(tx)
+        (CoordinatorHandle::new(tx), event_rx)
+    }
+
+    fn spawn_session(
+        event_tx: &mpsc::UnboundedSender<CoordinatorEvent>,
+        guild_id: GuildId,
+        channel_id: ChannelId,
+        internal_tx: &mpsc::UnboundedSender<CoordinatorInternalMessage>,
+    ) -> mpsc::UnboundedSender<SessionMessage> {
+        let (session_event_tx, session_event_rx) = broadcast::channel(1);
+        let room = Room::new(guild_id, channel_id, Moment::now());
+        let tx = start_session(room, internal_tx.clone(), session_event_tx);
+
+        if let Err(err) = event_tx.send(CoordinatorEvent::Published {
+            channel_id,
+            session_event_rx,
+        }) {
+            warn!("could not publish session for channel {}: {}", channel_id, err);
+        }
+
+        tx
     }
 
     pub async fn run(mut self) {
@@ -105,11 +135,10 @@ impl Coordinator {
 
                             if handle.has_suspended_events() {
                                 info!("Handle has suspended events. Creating new session and reconnecting handle...");
-                                let room = Room::new(room.guild_id, room.channel_id, Moment::now());
-                                let tx = start_session(room, internal_tx.clone());
+                                let tx = Self::spawn_session(&self.event_tx, room.guild_id, room.channel_id, &internal_tx);
                                 handle.reconnect(tx);
                                 if let Err(err) = handle.resume_delivery() {
-                                    error!("failed to resume session: {}", err);
+                                    error!("failed to resume handle: {}", err);
                                     self.sessions.remove(&channel_id);
                                 }
                             } else {
@@ -135,8 +164,8 @@ impl Coordinator {
                     match message {
                         CoordinatorMessage::Track { channel_id, guild_id, message } => {
                             let handle = self.sessions.entry(channel_id).or_insert_with(|| {
-                                let room = Room::new(guild_id, channel_id, Moment::now());
-                                let tx = start_session(room, internal_tx.clone());
+                                let tx = Self::spawn_session(&self.event_tx, guild_id, channel_id, &internal_tx);
+
                                 SessionHandle::new(tx)
                             });
 
@@ -166,9 +195,10 @@ impl Coordinator {
 fn start_session(
     room: Room,
     internal_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
+    event_tx: broadcast::Sender<SessionEvent>,
 ) -> mpsc::UnboundedSender<SessionMessage> {
     let (tx, rx) = mpsc::unbounded_channel();
-    let session = Session::new(room, rx, internal_tx);
+    let session = Session::new(room, rx, internal_tx, event_tx);
 
     tokio::spawn(session.run());
 

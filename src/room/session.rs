@@ -6,10 +6,11 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::select;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tracing::{error, info};
+use crate::room::RoomLease;
 
 pub struct SessionHandle {
     suspended_events: Option<Vec<SessionMessage>>,
@@ -96,10 +97,21 @@ pub enum SessionMessage {
     },
 }
 
+#[derive(Clone)]
+pub enum SessionEvent {
+    Updated {
+        room: RoomLease,
+    },
+    Shutdown {
+        room: RoomLease,
+    }
+}
+
 pub struct Session {
     room: Room,
     rx: mpsc::UnboundedReceiver<SessionMessage>,
     coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
+    event_tx: broadcast::Sender<SessionEvent>,
 }
 
 impl Session {
@@ -107,11 +119,13 @@ impl Session {
         room: Room,
         rx: mpsc::UnboundedReceiver<SessionMessage>,
         coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
+        event_tx: broadcast::Sender<SessionEvent>,
     ) -> Session {
         Session {
             room,
             rx,
             coordinator_tx,
+            event_tx,
         }
     }
 
@@ -129,15 +143,18 @@ impl Session {
                         SessionMessage::Connect{ now, identification, flags } => {
                             self.room.handle_connect(now, identification, flags).expect("invalid state");
                             idle_timer.abort();
+                            let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
                         }
                         SessionMessage::Disconnect{ now, user_id } => {
                             let status = self.room.handle_disconnect(now, user_id).expect("invalid state");
                             if status == RoomStatus::Empty {
                                 idle_timer.start_countdown();
                             }
+                            let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
                         }
                         SessionMessage::Update{ now, user_id, flags } => {
                             self.room.handle_update(now, user_id, flags).expect("invalid state");
+                            let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
                         }
 
                         SessionMessage::RequestShutdown{ reason } => {
@@ -147,6 +164,7 @@ impl Session {
                                     channel_id: self.room.channel_id
                                 }) {
                                     error!("failed to send shutdown rejection to coordinator: {}", err);
+                                    let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease() });
                                     break;
                                 }
                                 continue;
@@ -158,11 +176,13 @@ impl Session {
                                     channel_id: self.room.channel_id
                                 }) {
                                     error!("failed to send shutdown rejection to coordinator: {}", err);
+                                    let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease() });
                                     break;
                                 }
                                 continue;
                             }
 
+                            let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease() });
                             if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }) {
                                 error!("failed to send shutdown ready to coordinator: {}", err);
                             }
