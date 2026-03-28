@@ -1,7 +1,6 @@
 use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
 use std::sync::{Arc, Mutex};
 use tiny_skia::{Color, IntSize, Mask, Paint, Pixmap, PixmapPaint, PixmapRef, Rect, Transform};
-use tracing::debug;
 
 #[derive(Clone)]
 pub struct Calligraphy {
@@ -43,11 +42,9 @@ impl Calligraphy {
             let half_line_width = run.line_w / 2.0;
 
             for glyph in run.glyphs {
-                debug!("now drawing: {:?}", glyph);
                 let physical_glyph = glyph.physical((-half_line_width, 0.0), 1.0);
 
                 if let Some(image) = swash_cache.get_image(font_system, physical_glyph.cache_key) {
-                    debug!("placement: {:?}", image.placement);
                     let left = x as i32 + image.placement.left + physical_glyph.x;
                     let top = y as i32 - image.placement.top + physical_glyph.y;
                     let width = image.placement.width;
