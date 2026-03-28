@@ -23,10 +23,16 @@ impl RoomIdGenerator {
         Self { next: 0 }
     }
 
-    pub fn next(&mut self) -> RoomId {
+    pub fn next_id(&mut self) -> RoomId {
         let id = RoomId(self.next);
         self.next += 1;
         id
+    }
+}
+
+impl Default for RoomIdGenerator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

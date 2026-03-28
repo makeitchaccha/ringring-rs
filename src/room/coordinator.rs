@@ -169,7 +169,7 @@ impl Coordinator {
 
                             if handle.has_suspended_events() {
                                 info!("Handle has suspended events. Creating new session and reconnecting handle...");
-                                let tx = Self::spawn_session(&self.event_tx, id_generator.next(), room.guild_id, room.channel_id, &internal_tx);
+                                let tx = Self::spawn_session(&self.event_tx, id_generator.next_id(), room.guild_id, room.channel_id, &internal_tx);
                                 handle.reconnect(tx);
                                 if let Err(err) = handle.resume_delivery() {
                                     error!("failed to resume handle: {}", err);
@@ -198,7 +198,7 @@ impl Coordinator {
                     match message {
                         CoordinatorMessage::Track { channel_id, guild_id, message } => {
                             let handle = self.sessions.entry(channel_id).or_insert_with(|| {
-                                let tx = Self::spawn_session(&self.event_tx, id_generator.next(), guild_id, channel_id, &internal_tx);
+                                let tx = Self::spawn_session(&self.event_tx, id_generator.next_id(), guild_id, channel_id, &internal_tx);
 
                                 SessionHandle::new(tx)
                             });

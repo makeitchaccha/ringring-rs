@@ -24,7 +24,7 @@ impl RoomSnapshot {
             participants: room
                 .participants
                 .into_iter()
-                .map(|p| ParticipantSnapshot::from_lease(p))
+                .map(ParticipantSnapshot::from_lease)
                 .collect(),
         }
     }

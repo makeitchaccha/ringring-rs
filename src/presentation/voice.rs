@@ -54,10 +54,8 @@ impl VoiceHandler {
             if let Err(err) = self.coordinator_handle.track(channel_id, guild_id, message) {
                 error!("failed to send message to coordinator: {}", err);
             }
-        } else {
-            if let Err(err) = self.coordinator_handle.notify(channel_id, message) {
-                error!("failed to send message to coordinator: {}", err);
-            }
+        } else if let Err(err) = self.coordinator_handle.notify(channel_id, message) {
+            error!("failed to send message to coordinator: {}", err);
         }
     }
 
@@ -98,7 +96,7 @@ impl EventHandler for VoiceHandler {
             let Some(guild_ref) = guild_id.to_guild_cached(&ctx) else {
                 continue;
             };
-            for (_, voice_state) in &guild_ref.voice_states {
+            for voice_state in guild_ref.voice_states.values() {
                 let mut voice_state = voice_state.clone();
                 voice_state.guild_id = Some(guild_id);
                 voice_states.push(voice_state);

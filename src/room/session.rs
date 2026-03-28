@@ -67,7 +67,7 @@ impl SessionHandle {
     pub fn has_suspended_events(&self) -> bool {
         self.suspended_events
             .as_ref()
-            .is_some_and(|events| events.len() > 0)
+            .is_some_and(|events| !events.is_empty())
     }
 }
 
