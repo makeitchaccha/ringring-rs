@@ -253,7 +253,10 @@ impl Reporter {
                         )
                         .await;
                 }
-                Err(_) => {
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!("Reporter lagged behind, skipped {} events. Catching up to latest.", skipped);
+                }
+                Err(broadcast::error::RecvError::Closed) => {
                     info!("Session event rx closed, shutdown reporter");
                     break;
                 }
