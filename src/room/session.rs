@@ -1,16 +1,16 @@
 use crate::room::coordinator::CoordinatorInternalMessage;
 use crate::room::model::{Room, RoomStatus};
 use crate::room::types::{UserIdentity, VoiceStateFlags};
+use crate::room::{Moment, RoomLease};
 use serenity::all::UserId;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::select;
-use tokio::sync::{broadcast, mpsc};
 use tokio::sync::mpsc::error::SendError;
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
 use tracing::{error, info};
-use crate::room::RoomLease;
 
 pub struct SessionHandle {
     suspended_events: Option<Vec<SessionMessage>>,
@@ -94,17 +94,14 @@ pub enum SessionMessage {
     },
     RequestShutdown {
         reason: ShutdownReason,
+        end: Moment,
     },
 }
 
 #[derive(Clone)]
 pub enum SessionEvent {
-    Updated {
-        room: RoomLease,
-    },
-    Shutdown {
-        room: RoomLease,
-    }
+    Updated { room: RoomLease },
+    Shutdown { room: RoomLease, end: Moment },
 }
 
 pub struct Session {
@@ -157,14 +154,14 @@ impl Session {
                             let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
                         }
 
-                        SessionMessage::RequestShutdown{ reason } => {
+                        SessionMessage::RequestShutdown{ reason, end } => {
                             if !self.room.is_empty() {
                                 info!("Session has requested to shutdown but is not empty. Reject shutdown.");
                                 if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
                                     channel_id: self.room.channel_id
                                 }) {
                                     error!("failed to send shutdown rejection to coordinator: {}", err);
-                                    let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease() });
+                                    let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease(), end });
                                     break;
                                 }
                                 continue;
@@ -176,13 +173,13 @@ impl Session {
                                     channel_id: self.room.channel_id
                                 }) {
                                     error!("failed to send shutdown rejection to coordinator: {}", err);
-                                    let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease() });
+                                    let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease(), end });
                                     break;
                                 }
                                 continue;
                             }
 
-                            let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease() });
+                            let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease(), end });
                             if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }) {
                                 error!("failed to send shutdown ready to coordinator: {}", err);
                             }
@@ -196,7 +193,7 @@ impl Session {
                 _ = &mut idle_timer => {
                     info!("detected idle, starting idle-shutdown sequence...");
                     idle_timer.wait_for_shutdown_request();
-                    if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id }) {
+                    if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id, since: self.room.start.at(idle_timer.status.as_ref().unwrap().start) }) {
                         error!("failed to send idle notification to coordinator: {}", err);
                         break;
                     }
@@ -209,7 +206,12 @@ impl Session {
 struct IdleTimer {
     inner: Pin<Box<tokio::time::Sleep>>,
     timeout: Duration,
-    expire_at: Option<Instant>,
+    status: Option<IdleStatus>,
+}
+
+struct IdleStatus {
+    start: Instant,
+    deadline: Instant,
 }
 
 impl IdleTimer {
@@ -217,18 +219,21 @@ impl IdleTimer {
         Self {
             inner: Box::pin(tokio::time::sleep(Duration::MAX)),
             timeout,
-            expire_at: None,
+            status: None,
         }
     }
 
     fn start_countdown(&mut self) {
-        let deadline = Instant::now() + self.timeout;
+        let start = Instant::now();
+        let deadline = start + self.timeout;
         self.inner.as_mut().reset(deadline);
-        self.expire_at = Some(deadline);
+        self.status = Some(IdleStatus { start, deadline });
     }
 
     fn has_expired(&self, now: Instant) -> bool {
-        self.expire_at.is_some_and(|expire_at| expire_at < now)
+        self.status
+            .as_ref()
+            .is_some_and(|status| status.deadline < now)
     }
 
     fn wait_for_shutdown_request(&mut self) {
@@ -237,7 +242,7 @@ impl IdleTimer {
 
     fn abort(&mut self) {
         self.inner.as_mut().reset(Instant::now() + Duration::MAX);
-        self.expire_at = None;
+        self.status = None;
     }
 }
 

@@ -1,183 +1,264 @@
-use crate::graphics::{Timeline, TimelineRenderer, TimelineRendererError, transform};
-use crate::infrastructure::{AssetError, AssetProvider};
-use crate::reporting::ReportStateStore;
-use crate::room::{Participant, Room};
+use crate::graphics::{Timeline, timeline};
+use crate::infrastructure::{AssetProvider, MemberVisual};
+use crate::reporting::transformer::transform;
+use crate::reporting::types::RoomSnapshot;
+use crate::reporting::{ParticipantSnapshot, ReportAnchor};
+use crate::room::SessionEvent;
+use chrono::TimeDelta;
 use serenity::all::{
-    ChannelId, CreateAttachment, CreateMessage, EditAttachments, EditMessage, GuildId, Http,
-    MessageFlags, Timestamp,
+    CreateAttachment, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateMessage,
+    EditAttachments, EditMessage, FormattedTimestamp, FormattedTimestampStyle, GuildId, Http,
+    Mentionable, MessageFlags, Timestamp, UserId,
 };
-use serenity::prelude::SerenityError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use thiserror::Error;
-use tokio::sync::Mutex;
-use tokio::task::JoinError;
+use tokio::sync::broadcast;
 use tokio::time::Instant;
-
-#[derive(Debug, Error)]
-pub enum ReportServiceError {
-    #[error(transparent)]
-    Rendering(#[from] TimelineRendererError),
-
-    #[error(transparent)]
-    Asset(#[from] Arc<AssetError>),
-
-    #[error("")]
-    Join(#[from] JoinError),
-
-    #[error("Serenity error")]
-    Serenity(#[from] SerenityError),
-}
-
-pub type ReportServiceResult<T> = Result<T, ReportServiceError>;
+use tracing::{error, info, warn};
 
 pub struct Reporter {
+    http: Arc<Http>,
     asset_provider: AssetProvider,
-    renderer: Arc<TimelineRenderer>,
-    report_channels: HashMap<ChannelId, ChannelId>,
-    states: Arc<Mutex<ReportStateStore>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RoomSnapshot {
-    pub created_at: Instant,
-    pub timestamp: Timestamp,
-    pub guild_id: GuildId,
-    pub channel_id: ChannelId,
-    pub participants: Vec<Participant>,
-}
-
-impl RoomSnapshot {
-    pub fn from_room(room: &Room) -> Self {
-        let participants = room.participants().to_vec();
-
-        RoomSnapshot {
-            created_at: room.created_at(),
-            timestamp: room.timestamp(),
-            guild_id: room.guild_id(),
-            channel_id: room.channel_id(),
-            participants,
-        }
-    }
+    renderer: timeline::Renderer,
+    session_event_rx: broadcast::Receiver<SessionEvent>,
+    anchor: ReportAnchor,
 }
 
 impl Reporter {
+    const TIMELINE_IMAGE_FILE: &'static str = "timeline.png";
+    const TIMELINE_IMAGE_URL: &'static str =
+        constcat::concat!("attachment://", Reporter::TIMELINE_IMAGE_FILE);
+
     pub fn new(
-        asset_service: AssetProvider,
-        report_channels: HashMap<ChannelId, ChannelId>,
+        http: Arc<Http>,
+        asset_provider: AssetProvider,
+        renderer: timeline::Renderer,
+        session_event_rx: broadcast::Receiver<SessionEvent>,
+        anchor: ReportAnchor,
     ) -> Self {
         Self {
-            asset_provider: asset_service,
-            renderer: Arc::new(TimelineRenderer::new()),
-            report_channels,
-            states: Arc::new(Mutex::new(ReportStateStore::new())),
+            http,
+            asset_provider,
+            renderer,
+            session_event_rx,
+            anchor,
         }
     }
 
-    async fn create_timeline(
-        &self,
-        now: Instant,
-        snapshot: &RoomSnapshot,
-        finalized: bool,
-    ) -> ReportServiceResult<Timeline> {
-        let mut visuals = HashMap::new();
+    pub fn spawn(
+        http: Arc<Http>,
+        asset_provider: AssetProvider,
+        renderer: timeline::Renderer,
+        session_event_rx: broadcast::Receiver<SessionEvent>,
+        anchor: ReportAnchor,
+    ) {
+        let reporter = Self::new(http, asset_provider, renderer, session_event_rx, anchor);
+        tokio::spawn(reporter.run());
+    }
 
-        for participant in &snapshot.participants {
-            let visual = self
-                .asset_provider
-                .get_members_visual(
-                    snapshot.guild_id,
-                    participant.identification.user_id,
-                    &participant.identification.face,
+    fn generate_core_embed(timestamp: Timestamp) -> CreateEmbed {
+        CreateEmbed::new()
+            .author(CreateEmbedAuthor::new("ringring-rs"))
+            .image(Self::TIMELINE_IMAGE_URL)
+            .timestamp(timestamp)
+            .footer(CreateEmbedFooter::new("ringring-rs v26.03.27"))
+    }
+
+    fn format_time_delta(delta: TimeDelta) -> String {
+        let total_seconds = delta.num_minutes();
+        let hours = total_seconds / 60;
+        let minutes = total_seconds % 60;
+
+        format!("{:01}:{:02}", hours, minutes)
+    }
+
+    fn format_history(now: Instant, participants: &[ParticipantSnapshot]) -> String {
+        participants
+            .iter()
+            .map(|participant| {
+                format!(
+                    "{} ({})",
+                    participant.identity.name,
+                    Self::format_time_delta(
+                        TimeDelta::from_std(participant.calculate_duration(now)).unwrap()
+                    )
                 )
-                .await?;
-
-            visuals.insert(participant.identification.user_id, visual);
-        }
-
-        Ok(transform(now, snapshot, &visuals, finalized))
+            })
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 
-    pub async fn send_room_report(
-        &self,
-        http: &Http,
-        now: Instant,
-        snapshot: &RoomSnapshot,
-        ongoing: bool,
-    ) -> ReportServiceResult<()> {
-        let timeline = self.create_timeline(now, snapshot, ongoing).await?;
+    async fn fetch_member_visuals(
+        asset_provider: &AssetProvider,
+        guild_id: GuildId,
+        participants: &[ParticipantSnapshot],
+    ) -> Result<HashMap<UserId, MemberVisual>, String> {
+        let mut visuals = HashMap::new();
+        for participant in participants {
+            let Ok(visual) = asset_provider
+                .get_members_visual(
+                    guild_id,
+                    participant.identity.user_id,
+                    &participant.identity.face,
+                )
+                .await
+            else {
+                // TODO: fallback
+                return Err(format!(
+                    "Cannot fetch member visual: {}",
+                    participant.identity.user_id
+                ));
+            };
 
-        let renderer = self.renderer.clone();
+            visuals.insert(participant.identity.user_id, visual);
+        }
+        Ok(visuals)
+    }
 
-        let task = tokio::task::spawn_blocking(move || renderer.generate_png_image(&timeline));
+    pub async fn run(mut self) {
+        let mut room_snapshot = None;
 
-        let encoded_image = task.await??;
+        loop {
+            match self.session_event_rx.recv().await {
+                Ok(SessionEvent::Updated { room }) => {
+                    let snapshot = RoomSnapshot::from_lease(room);
+                    let now = Instant::now();
+                    let elapsed = TimeDelta::from_std(now - snapshot.start.mono).unwrap();
+                    let embed = Self::generate_core_embed(snapshot.start.wall)
+                        .title("On Call")
+                        .description(format!(
+                            "Room is active on {}",
+                            snapshot.channel_id.mention()
+                        ))
+                        .field(
+                            "start",
+                            FormattedTimestamp::new(
+                                snapshot.start.wall,
+                                Some(FormattedTimestampStyle::ShortTime),
+                            )
+                            .to_string(),
+                            true,
+                        )
+                        .field("elapse", Self::format_time_delta(elapsed).to_string(), true)
+                        .field(
+                            "history",
+                            Self::format_history(now, snapshot.participants.as_ref()),
+                            false,
+                        );
 
-        let mut states_guard = self.states.lock().await;
-
-        let report_channel_id = self
-            .report_channels
-            .get(&snapshot.channel_id)
-            .unwrap_or(&snapshot.channel_id);
-
-        match states_guard.get(&snapshot.channel_id) {
-            Some(state) => {
-                if !ongoing && state.last_updated_at + Duration::from_secs(20) > now {
-                    return Ok(());
-                }
-
-                match report_channel_id
-                    .edit_message(
-                        http,
-                        state.message_id,
-                        EditMessage::new()
-                            .embed(self.renderer.generate_ongoing_embed(
-                                now,
-                                Timestamp::now(),
-                                snapshot,
-                            ))
-                            .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
-                            .attachments(
-                                EditAttachments::new()
-                                    .add(CreateAttachment::bytes(encoded_image, "thumbnail.png")),
-                            ),
+                    let Ok(visuals) = Self::fetch_member_visuals(
+                        &self.asset_provider,
+                        snapshot.guild_id,
+                        snapshot.participants.as_ref(),
                     )
                     .await
-                {
-                    Ok(_) => {
-                        if ongoing {
-                            states_guard.touch(snapshot.channel_id);
-                        } else {
-                            states_guard.remove(snapshot.channel_id);
-                        }
-                        Ok(())
-                    }
-                    Err(err) => Err(err.into()),
+                    else {
+                        warn!("failed to fetch member visuals");
+                        continue;
+                    };
+
+                    let renderer = self.renderer.clone();
+                    let timeline = transform(now, &snapshot, &visuals, true);
+                    let Ok(task) =
+                        tokio::task::spawn_blocking(move || renderer.generate_png_image(&timeline))
+                            .await
+                    else {
+                        error!("failed to spawn blocking task to generate image");
+                        continue;
+                    };
+
+                    room_snapshot = Some(snapshot);
+
+                    let Ok(image) = task else {
+                        error!("failed to generate image");
+                        continue;
+                    };
+
+                    let _ = self
+                        .anchor
+                        .sync(
+                            &self.http,
+                            embed,
+                            CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_URL),
+                        )
+                        .await;
                 }
-            }
-            None => {
-                match report_channel_id
-                    .send_message(
-                        http,
-                        CreateMessage::new()
-                            .embed(self.renderer.generate_ongoing_embed(
-                                now,
-                                Timestamp::now(),
-                                snapshot,
-                            ))
-                            .flags(MessageFlags::SUPPRESS_NOTIFICATIONS)
-                            .add_file(CreateAttachment::bytes(encoded_image, "thumbnail.png")),
+                Ok(SessionEvent::Shutdown { room, end }) => {
+                    let snapshot = RoomSnapshot::from_lease(room);
+                    let now = Instant::now();
+                    let elapsed = TimeDelta::from_std(now - snapshot.start.mono).unwrap();
+                    let embed = Self::generate_core_embed(snapshot.start.wall)
+                        .title("On Call")
+                        .description(format!(
+                            "Room is active on {}",
+                            snapshot.channel_id.mention()
+                        ))
+                        .field(
+                            "start",
+                            FormattedTimestamp::new(
+                                snapshot.start.wall,
+                                Some(FormattedTimestampStyle::ShortTime),
+                            )
+                            .to_string(),
+                            true,
+                        )
+                        .field(
+                            "end",
+                            FormattedTimestamp::new(
+                                end.wall,
+                                Some(FormattedTimestampStyle::ShortTime),
+                            )
+                            .to_string(),
+                            true,
+                        )
+                        .field("elapse", Self::format_time_delta(elapsed).to_string(), true)
+                        .field(
+                            "history",
+                            Self::format_history(now, snapshot.participants.as_ref()),
+                            false,
+                        );
+
+                    let Ok(visuals) = Self::fetch_member_visuals(
+                        &self.asset_provider,
+                        snapshot.guild_id,
+                        snapshot.participants.as_ref(),
                     )
                     .await
-                {
-                    Ok(message) => {
-                        if ongoing {
-                            states_guard.insert(snapshot.channel_id, message.id);
-                        }
-                        Ok(())
-                    }
-                    Err(err) => Err(err.into()),
+                    else {
+                        warn!("failed to fetch member visuals");
+                        continue;
+                    };
+
+                    let renderer = self.renderer.clone();
+                    let timeline = transform(now, &snapshot, &visuals, true);
+                    let Ok(task) =
+                        tokio::task::spawn_blocking(move || renderer.generate_png_image(&timeline))
+                            .await
+                    else {
+                        error!("failed to spawn blocking task to generate image");
+                        continue;
+                    };
+
+                    room_snapshot = Some(snapshot);
+
+                    let Ok(image) = task else {
+                        error!("failed to generate image");
+                        continue;
+                    };
+
+                    let _ = self
+                        .anchor
+                        .sync(
+                            &self.http,
+                            embed,
+                            CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_URL),
+                        )
+                        .await;
+                }
+                Err(_) => {
+                    info!("Session event rx closed, shutdown reporter");
+                    break;
                 }
             }
         }

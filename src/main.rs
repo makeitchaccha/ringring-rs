@@ -78,7 +78,7 @@ async fn main() {
                                 .send_room_report(
                                     &http,
                                     now,
-                                    &RoomSnapshot::from_room(&room_guard),
+                                    &RoomSnapshot::from_lease(&room_guard),
                                     false,
                                 )
                                 .await
@@ -115,7 +115,7 @@ async fn main() {
                     let http = http.clone();
                     let snapshot = {
                         let room = room.lock().await;
-                        RoomSnapshot::from_room(&room)
+                        RoomSnapshot::from_lease(&room)
                     };
                     let now = Instant::now();
                     match reporter.send_room_report(&http, now, &snapshot, true).await {

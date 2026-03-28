@@ -16,7 +16,7 @@ pub fn transform(
     ongoing: bool,
 ) -> Timeline {
     let terminated_at = if ongoing {
-        calculate_auto_scale(room.created_at, now)
+        calculate_auto_scale(room.start.mono, now)
     } else {
         now
     };
@@ -26,22 +26,22 @@ pub fn transform(
         .iter()
         .map(|p| {
             let visual = visuals
-                .get(&p.identification.user_id)
+                .get(&p.identity.user_id)
                 .expect("visual must be pre-fetched before rendering.");
 
             TimelineEntry {
                 avatar: visual.avatar.clone(),
                 voice_sections: convert_to_voice_sections(
-                    room.created_at,
+                    room.start.mono,
                     now,
                     terminated_at,
-                    p.history(),
+                    p.history.as_ref(),
                 ),
                 streaming_sections: convert_to_streaming_sections(
-                    room.created_at,
+                    room.start.mono,
                     now,
                     terminated_at,
-                    p.history(),
+                    p.history.as_ref(),
                 ),
                 active_color: visual.active_color,
                 streaming_color: visual.streaming_color,
@@ -51,12 +51,12 @@ pub fn transform(
         .collect();
 
     Timeline {
-        created_at: room.created_at,
+        created_at: room.start.mono,
         terminated_at,
-        created_timestamp: room.timestamp.with_timezone(&Local),
+        created_timestamp: room.start.wall.with_timezone(&Local),
         indicator: if ongoing { Some(now) } else { None },
         entries,
-        tick: choose_suitable_tics(terminated_at - room.created_at),
+        tick: choose_suitable_tics(terminated_at - room.start.mono),
     }
 }
 

@@ -5,8 +5,8 @@ use crate::room::types::Moment;
 use serenity::all::{ChannelId, GuildId};
 use std::collections::HashMap;
 use tokio::select;
-use tokio::sync::{broadcast, mpsc};
 use tokio::sync::mpsc::error::SendError;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 
 pub struct CoordinatorHandle {
@@ -18,20 +18,36 @@ impl CoordinatorHandle {
         Self { tx }
     }
 
-    pub fn track(&self, channel_id: ChannelId, guild_id: GuildId, message: SessionMessage) -> Result<(), SendError<CoordinatorMessage>> {
-        self.tx.send(CoordinatorMessage::Track { channel_id, guild_id, message })
+    pub fn track(
+        &self,
+        channel_id: ChannelId,
+        guild_id: GuildId,
+        message: SessionMessage,
+    ) -> Result<(), SendError<CoordinatorMessage>> {
+        self.tx.send(CoordinatorMessage::Track {
+            channel_id,
+            guild_id,
+            message,
+        })
     }
 
-    pub fn notify(&self, channel_id: ChannelId, message: SessionMessage) -> Result<(), SendError<CoordinatorMessage>> {
-        self.tx.send(CoordinatorMessage::Notify { channel_id, message })
+    pub fn notify(
+        &self,
+        channel_id: ChannelId,
+        message: SessionMessage,
+    ) -> Result<(), SendError<CoordinatorMessage>> {
+        self.tx.send(CoordinatorMessage::Notify {
+            channel_id,
+            message,
+        })
     }
 }
 
 pub enum CoordinatorEvent {
-    Published{
+    Published {
         channel_id: ChannelId,
         session_event_rx: broadcast::Receiver<SessionEvent>,
-    }
+    },
 }
 
 enum CoordinatorMessage {
@@ -47,9 +63,17 @@ enum CoordinatorMessage {
 }
 
 pub enum CoordinatorInternalMessage {
-    Idle { channel_id: ChannelId },
-    AcceptShutdown { channel_id: ChannelId, room: Room },
-    RejectShutdown { channel_id: ChannelId },
+    Idle {
+        channel_id: ChannelId,
+        since: Moment,
+    },
+    AcceptShutdown {
+        channel_id: ChannelId,
+        room: Room,
+    },
+    RejectShutdown {
+        channel_id: ChannelId,
+    },
 }
 
 pub struct Coordinator {
@@ -59,7 +83,10 @@ pub struct Coordinator {
 }
 
 impl Coordinator {
-    pub fn new(rx: mpsc::UnboundedReceiver<CoordinatorMessage>, event_tx: mpsc::UnboundedSender<CoordinatorEvent>) -> Self {
+    pub fn new(
+        rx: mpsc::UnboundedReceiver<CoordinatorMessage>,
+        event_tx: mpsc::UnboundedSender<CoordinatorEvent>,
+    ) -> Self {
         Self {
             sessions: HashMap::new(),
             rx,
@@ -91,7 +118,10 @@ impl Coordinator {
             channel_id,
             session_event_rx,
         }) {
-            warn!("could not publish session for channel {}: {}", channel_id, err);
+            warn!(
+                "could not publish session for channel {}: {}",
+                channel_id, err
+            );
         }
 
         tx
@@ -107,7 +137,7 @@ impl Coordinator {
                 biased;
                 Some(message) = internal_rx.recv() => {
                     match message {
-                        CoordinatorInternalMessage::Idle { channel_id } => {
+                        CoordinatorInternalMessage::Idle { channel_id, since } => {
                             let Some(handle) = self.sessions.get_mut(&channel_id) else {
                                 warn!("Coordinator received idle message from already disposed session, so just ignore the message.");
                                 continue;
@@ -122,6 +152,7 @@ impl Coordinator {
                             handle.suspend_delivery();
                             if let Err(err) = handle.bypass(SessionMessage::RequestShutdown {
                                 reason: ShutdownReason::Idle,
+                                end: since,
                             }) {
                                 warn!("could not request shutdown: {}", err);
                                 self.sessions.remove(&channel_id);

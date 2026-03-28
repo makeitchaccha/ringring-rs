@@ -1,5 +1,7 @@
 use crate::room::model::Activity;
+use chrono::TimeDelta;
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
+use std::ops::Add;
 use std::sync::Arc;
 use tokio::time::Instant;
 
@@ -30,6 +32,18 @@ impl Moment {
 
     pub fn now() -> Self {
         Self::new(Timestamp::now(), Instant::now())
+    }
+
+    pub fn at(&self, new_mono: Instant) -> Self {
+        let wall = self.wall.with_timezone(&chrono::Local);
+        let delta = TimeDelta::from_std(new_mono - self.mono).expect("Duration overflow");
+
+        let new_wall = Timestamp::from(wall + delta);
+
+        Self {
+            wall: new_wall,
+            mono: new_mono,
+        }
     }
 }
 
