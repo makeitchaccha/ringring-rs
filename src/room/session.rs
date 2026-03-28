@@ -233,11 +233,11 @@ struct IdleStatus {
 }
 
 impl IdleTimer {
-    const FUTURE: Duration = Duration::from_hours(24);
+    const FAR_FUTURE: Duration = Duration::from_secs(86400 * 30);
 
     fn with_timeout(timeout: Duration) -> Self {
         Self {
-            inner: Box::pin(tokio::time::sleep(IdleTimer::FUTURE)),
+            inner: Box::pin(tokio::time::sleep(IdleTimer::FAR_FUTURE)),
             timeout,
             status: None,
         }
@@ -259,13 +259,13 @@ impl IdleTimer {
     fn wait_for_shutdown_request(&mut self) {
         self.inner
             .as_mut()
-            .reset(Instant::now() + Duration::from_hours(24));
+            .reset(Instant::now() + Self::FAR_FUTURE);
     }
 
     fn abort(&mut self) {
         self.inner
             .as_mut()
-            .reset(Instant::now() + Duration::from_hours(24));
+            .reset(Instant::now() + Self::FAR_FUTURE);
         self.status = None;
     }
 }
