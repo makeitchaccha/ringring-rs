@@ -193,7 +193,7 @@ impl Session {
 
                             let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease(), end });
                             if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }) {
-                                error!(error = %err, "Failed to send shutdown rejection");
+                                error!(error = %err, "Failed to send shutdown acceptance");
                             }
 
                             info!("Session stopped");
