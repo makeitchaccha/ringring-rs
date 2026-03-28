@@ -1,3 +1,4 @@
+#[derive(Copy, Clone)]
 pub struct AspectRatioPolicy {
     pub target_width_ratio: f32,
     pub target_height_ratio: f32,

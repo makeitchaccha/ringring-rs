@@ -1,4 +1,4 @@
-use crate::graphics::AspectRatioPolicy;
+use crate::graphics::timeline::policy::AspectRatioPolicy;
 use tiny_skia::NonZeroRect;
 
 #[derive(Copy, Clone)]
@@ -19,6 +19,7 @@ impl Margin {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct LayoutConfig {
     pub margin: Margin,
     pub label_area_height: f32,
@@ -27,6 +28,25 @@ pub struct LayoutConfig {
     pub aspect_ratio_policy: AspectRatioPolicy,
     pub entry_height: f32,
     pub avatar_size: f32,
+}
+
+impl Default for LayoutConfig {
+    fn default() -> Self {
+        LayoutConfig {
+            margin: Margin {
+                left: 10.0,
+                top: 10.0,
+                right: 10.0,
+                bottom: 10.0,
+            },
+            label_area_height: 20.0,
+            avatar_column_width: 100.0,
+            min_timeline_width: 900.0,
+            entry_height: 70.0,
+            avatar_size: 64.0,
+            aspect_ratio_policy: AspectRatioPolicy::discord_thumbnail_4_3(),
+        }
+    }
 }
 
 impl LayoutConfig {

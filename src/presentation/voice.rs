@@ -1,23 +1,86 @@
-use crate::reporting::{Reporter, RoomSnapshot};
-use crate::room::{Identification, Room, RoomManager};
-use serenity::all::{Context, EventHandler, GuildId, Timestamp, VoiceState};
+use crate::reporting::subscription::SubscriptionProvider;
+use crate::room::{CoordinatorHandle, SessionMessage, UserIdentity};
+use serenity::all::{ChannelId, Context, EventHandler, GuildId, Http, VoiceState};
 use serenity::async_trait;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::task::JoinSet;
 use tokio::time::Instant;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 pub struct VoiceHandler {
-    room_manager: Arc<RoomManager>,
-    report_service: Arc<Reporter>,
+    subscription_provider: Arc<dyn SubscriptionProvider>,
+    coordinator_handle: CoordinatorHandle,
 }
 
 impl VoiceHandler {
-    pub fn new(room_manager: Arc<RoomManager>, report_service: Arc<Reporter>) -> Self {
-        VoiceHandler {
-            room_manager,
-            report_service,
+    pub fn new(
+        subscription_provider: Arc<dyn SubscriptionProvider>,
+        coordinator_handle: CoordinatorHandle,
+    ) -> Self {
+        Self {
+            subscription_provider,
+            coordinator_handle,
+        }
+    }
+}
+
+impl VoiceHandler {
+    async fn handle_connection(
+        &self,
+        http: &Http,
+        now: Instant,
+        channel_id: ChannelId,
+        voice_state: &VoiceState,
+    ) {
+        let Some(guild_id) = voice_state.guild_id else {
+            warn!("failed to get guild id");
+            return;
+        };
+
+        let Ok(member) = guild_id.member(&http, voice_state.user_id).await else {
+            warn!("failed to get member");
+            return;
+        };
+
+        let message = SessionMessage::Connect {
+            now,
+            identity: UserIdentity {
+                user_id: voice_state.user_id,
+                name: Arc::from(member.display_name()),
+                face: Arc::from(member.face()),
+            },
+            flags: voice_state.into(),
+        };
+        if self.subscription_provider.has_subscription(channel_id) {
+            if let Err(err) = self.coordinator_handle.track(channel_id, guild_id, message) {
+                error!("failed to send message to coordinator: {}", err);
+            }
+        } else if let Err(err) = self.coordinator_handle.notify(channel_id, message) {
+            error!("failed to send message to coordinator: {}", err);
+        }
+    }
+
+    fn handle_disconnection(&self, now: Instant, channel_id: ChannelId, voice_state: &VoiceState) {
+        if let Err(err) = self.coordinator_handle.notify(
+            channel_id,
+            SessionMessage::Disconnect {
+                now,
+                user_id: voice_state.user_id,
+            },
+        ) {
+            error!("failed to send message to coordinator: {}", err);
+        }
+    }
+
+    fn handle_update(&self, now: Instant, channel_id: ChannelId, voice_state: &VoiceState) {
+        if let Err(err) = self.coordinator_handle.notify(
+            channel_id,
+            SessionMessage::Update {
+                now,
+                user_id: voice_state.user_id,
+                flags: voice_state.into(),
+            },
+        ) {
+            error!("failed to send message to coordinator: {}", err);
         }
     }
 }
@@ -26,216 +89,91 @@ impl VoiceHandler {
 impl EventHandler for VoiceHandler {
     async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
         debug!("cache is ready for guilds: {:?}", guilds);
-
-        let manager = self.room_manager.clone();
-
         let now = Instant::now();
-        let timestamp = Timestamp::now();
-
-        let mut tasks = JoinSet::new();
+        let mut voice_states = Vec::new();
 
         for guild_id in guilds {
-            let guild = match ctx.cache.guild(guild_id) {
-                Some(guild) => guild,
-                None => {
-                    error!(
-                        "CRITICAL: Guild ID {} reported by cache_ready event is missing from cache",
-                        guild_id
-                    );
-                    continue;
-                }
+            let Some(guild_ref) = guild_id.to_guild_cached(&ctx) else {
+                continue;
             };
-            for (user_id, voice_state) in guild.voice_states.iter() {
-                let flags = voice_state.into();
-                let channel_id = match voice_state.channel_id {
-                    Some(channel_id) => channel_id,
-                    None => {
-                        debug!(
-                            "Voice State for User {} reported by cache_ready event is not joining voice channel",
-                            voice_state.user_id
-                        );
-                        continue;
-                    }
-                };
-                let member = match guild.members.get(user_id) {
-                    Some(member) => member,
-                    None => {
-                        error!(
-                            "CRITICAL: failed to get member for User ID {} on Guild ID {} from cache",
-                            user_id, guild_id
-                        );
-                        continue;
-                    }
-                };
-                let name = member.display_name().into();
-                let face = member.face();
-                let user_id = user_id.into();
-
-                let manager_for_task = manager.clone();
-
-                let connect_task = async move {
-                    manager_for_task
-                        .handle_connect_event(
-                            now,
-                            timestamp,
-                            channel_id,
-                            guild_id,
-                            Identification {
-                                user_id,
-                                name,
-                                face,
-                            },
-                            flags,
-                        )
-                        .await
-                };
-                tasks.spawn(connect_task);
+            for voice_state in guild_ref.voice_states.values() {
+                let mut voice_state = voice_state.clone();
+                voice_state.guild_id = Some(guild_id);
+                voice_states.push(voice_state);
             }
         }
 
-        while let Some(res) = tasks.join_next().await {
-            if let Err(why) = res {
-                debug!("error joining voice channel: {why:?}");
+        for voice_state in voice_states {
+            if let Some(channel) = voice_state.channel_id {
+                self.handle_connection(&ctx.http, now, channel, &voice_state)
+                    .await;
             }
         }
     }
 
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
-        debug!(
-            "voice_state_update: {:?} -> {}",
-            old.as_ref().map(format_voice_state_nicely),
-            format_voice_state_nicely(&new)
-        );
-        let manager = self.room_manager.clone();
-        let now = Instant::now();
-        let timestamp = Timestamp::now();
-        // if newly connected
-        if old.is_none() {
-            match handle_connect_safely(&manager, now, timestamp, new).await {
-                Ok(room) => {
-                    let room = room.lock().await;
-                    if let Err(err) = self
-                        .report_service
-                        .send_room_report(&ctx.http, now, &RoomSnapshot::from_room(&room), true)
-                        .await
-                    {
-                        error!("Error sending room report: {:?}", err);
+        let channel_activity = ChannelActivity::from_voice_states(&old, &new);
+
+        match channel_activity {
+            ChannelActivity::Connect { new_channel_id } => {
+                self.handle_connection(&ctx.http, Instant::now(), new_channel_id, &new)
+                    .await;
+            }
+            ChannelActivity::Disconnect { old_channel_id } => {
+                self.handle_disconnection(Instant::now(), old_channel_id, &old.unwrap());
+            }
+            ChannelActivity::Move {
+                old_channel_id,
+                new_channel_id,
+            } => {
+                let now = Instant::now();
+                self.handle_disconnection(now, old_channel_id, &old.unwrap());
+                self.handle_connection(&ctx.http, now, new_channel_id, &new)
+                    .await;
+            }
+            ChannelActivity::Update { channel_id } => {
+                self.handle_update(Instant::now(), channel_id, &new);
+            }
+            ChannelActivity::Ignore => {}
+        }
+    }
+}
+
+enum ChannelActivity {
+    Connect {
+        new_channel_id: ChannelId,
+    },
+    Disconnect {
+        old_channel_id: ChannelId,
+    },
+    Move {
+        new_channel_id: ChannelId,
+        old_channel_id: ChannelId,
+    },
+    Update {
+        channel_id: ChannelId,
+    },
+    Ignore,
+}
+
+impl ChannelActivity {
+    fn from_voice_states(old: &Option<VoiceState>, new: &VoiceState) -> Self {
+        match (old.as_ref().and_then(|v| v.channel_id), new.channel_id) {
+            (Some(old_channel_id), None) => ChannelActivity::Disconnect { old_channel_id },
+            (None, Some(new_channel_id)) => ChannelActivity::Connect { new_channel_id },
+            (Some(old_channel_id), Some(new_channel_id)) => {
+                if old_channel_id != new_channel_id {
+                    ChannelActivity::Move {
+                        old_channel_id,
+                        new_channel_id,
+                    }
+                } else {
+                    ChannelActivity::Update {
+                        channel_id: new_channel_id,
                     }
                 }
-                Err(err) => {
-                    error!("Error handling connect event on channel: {err}");
-                }
             }
-            return;
+            _ => ChannelActivity::Ignore,
         }
-
-        // if just disconnected
-        if new.channel_id.is_none() {
-            if let Err(err) = handle_disconnect_safely(&manager, now, old).await {
-                error!("Error handling disconnect event on channel: {err}");
-            }
-            return;
-        }
-
-        // switch channel
-        if let Err(err) = handle_disconnect_safely(&manager, now, old).await {
-            error!("Error handling disconnect event on channel: {err}");
-        }
-        match handle_connect_safely(&manager, now, timestamp, new).await {
-            Ok(room) => {
-                let room = room.lock().await;
-                if let Err(err) = self
-                    .report_service
-                    .send_room_report(&ctx.http, now, &RoomSnapshot::from_room(&room), true)
-                    .await
-                {
-                    error!("Error sending room report: {:?}", err);
-                }
-            }
-            Err(err) => {
-                error!("Error handling connect event on channel: {err}");
-            }
-        }
-        return;
     }
-}
-
-async fn handle_connect_safely(
-    manager: &RoomManager,
-    now: Instant,
-    timestamp: Timestamp,
-    new: VoiceState,
-) -> Result<Arc<Mutex<Room>>, String> {
-    let flags = (&new).into();
-    let member = match new.member {
-        Some(member) => member,
-        None => return Err(String::from("Voice State is missing member")),
-    };
-
-    let channel_id = match new.channel_id {
-        Some(channel_id) => channel_id,
-        None => return Err(String::from("Voice State is missing Channel ID")),
-    };
-
-    let guild_id = match new.guild_id {
-        Some(guild_id) => guild_id,
-        None => return Err(String::from("Voice State is missing Guild ID")),
-    };
-    let name = member.display_name().into();
-    match manager
-        .handle_connect_event(
-            now,
-            timestamp,
-            channel_id,
-            guild_id,
-            Identification {
-                user_id: new.user_id,
-                name,
-                face: member.face(),
-            },
-            flags,
-        )
-        .await
-    {
-        Ok(room) => Ok(room),
-        Err(e) => Err(format!("Error handling connect event on channel: {e:?}")),
-    }
-}
-
-async fn handle_disconnect_safely(
-    manager: &RoomManager,
-    now: Instant,
-    old: Option<VoiceState>,
-) -> Result<(), String> {
-    let old = match old {
-        Some(old) => old,
-        None => {
-            return Err(String::from(
-                "Voice State Update is missing old voice channel",
-            ));
-        }
-    };
-
-    let channel_id = match old.channel_id {
-        Some(channel_id) => channel_id,
-        None => return Err(String::from("Voice State Update is missing channel ID")),
-    };
-
-    match manager
-        .handle_disconnect_event(now, channel_id, old.user_id)
-        .await
-    {
-        Ok(_) => Ok(()),
-        Err(err) => Err(format!(
-            "Error handling disconnect event on manager: {:?}",
-            err
-        )),
-    }
-}
-
-fn format_voice_state_nicely(voice_state: &VoiceState) -> String {
-    format!(
-        "VoiceState {{ channel_id: {:?}, guild_id: {:?}, user_id: {:?} }}",
-        voice_state.channel_id, voice_state.guild_id, voice_state.user_id
-    )
 }

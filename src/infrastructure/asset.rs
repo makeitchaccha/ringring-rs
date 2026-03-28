@@ -37,6 +37,7 @@ pub enum AssetError {
     Join(#[from] tokio::task::JoinError),
 }
 
+#[derive(Clone)]
 pub struct AssetProvider {
     client: reqwest::Client,
     cache: Cache<(GuildId, UserId), MemberVisual>,

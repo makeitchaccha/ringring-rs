@@ -19,6 +19,7 @@ tikv-jemallocator = { version = "0.6.1", features = ["profiling"], optional = tr
 cosmic-text = "0.15.0"
 thiserror = "2.0.17"
 serde_json = "1.0.149"
+constcat = "0.6.1"
 
 [features]
 default = ["jemalloc"]
