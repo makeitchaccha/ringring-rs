@@ -1,6 +1,5 @@
 mod publisher;
 pub mod reporter;
-pub mod state;
 pub mod subscription;
 pub mod transformer;
 mod types;
