@@ -101,7 +101,9 @@ impl EventHandler for VoiceHandler {
                 continue;
             };
             for (_, voice_state) in &guild_ref.voice_states {
-                voice_states.push(voice_state.clone());
+                let mut voice_state = voice_state.clone();
+                voice_state.guild_id = Some(guild_id);
+                voice_states.push(voice_state);
             }
         }
 
