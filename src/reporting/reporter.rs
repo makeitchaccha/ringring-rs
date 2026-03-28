@@ -232,7 +232,6 @@ impl Reporter {
     }
 }
 
-
 pub struct UpdateScheduler {
     soft_limit: Duration,
     hard_limit: Duration,

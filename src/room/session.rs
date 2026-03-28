@@ -257,15 +257,11 @@ impl IdleTimer {
     }
 
     fn wait_for_shutdown_request(&mut self) {
-        self.inner
-            .as_mut()
-            .reset(Instant::now() + Self::FAR_FUTURE);
+        self.inner.as_mut().reset(Instant::now() + Self::FAR_FUTURE);
     }
 
     fn abort(&mut self) {
-        self.inner
-            .as_mut()
-            .reset(Instant::now() + Self::FAR_FUTURE);
+        self.inner.as_mut().reset(Instant::now() + Self::FAR_FUTURE);
         self.status = None;
     }
 }

@@ -1,6 +1,7 @@
 use crate::room::{Activity, Moment, ParticipantLease, RoomLease, UserIdentity};
 use serenity::all::{
-    ChannelId, CreateAttachment, CreateEmbed, CreateMessage, EditAttachments, EditMessage, GuildId, MessageId,
+    ChannelId, CreateAttachment, CreateEmbed, CreateMessage, EditAttachments, EditMessage, GuildId,
+    MessageId,
 };
 use serenity::http::CacheHttp;
 use std::time::Duration;
