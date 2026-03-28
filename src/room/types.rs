@@ -1,11 +1,38 @@
 use crate::room::model::Activity;
 use chrono::TimeDelta;
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
+use std::fmt::Display;
 use std::sync::Arc;
 use tokio::time::Instant;
 
+#[derive(Copy, Clone, Debug)]
+pub struct RoomId(u64);
+
+impl Display for RoomId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:04}", self.0)
+    }
+}
+
+pub struct RoomIdGenerator {
+    next: u64,
+}
+
+impl RoomIdGenerator {
+    pub fn new() -> Self {
+        Self { next: 0 }
+    }
+
+    pub fn next(&mut self) -> RoomId {
+        let id = RoomId(self.next);
+        self.next += 1;
+        id
+    }
+}
+
 #[derive(Clone)]
 pub struct RoomLease {
+    pub id: RoomId,
     pub guild_id: GuildId,
     pub channel_id: ChannelId,
     pub start: Moment,

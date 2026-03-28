@@ -1,7 +1,7 @@
-use crate::room::Session;
 use crate::room::model::Room;
 use crate::room::session::{SessionEvent, SessionHandle, SessionMessage, ShutdownReason};
 use crate::room::types::Moment;
+use crate::room::{RoomId, RoomIdGenerator, Session};
 use serenity::all::{ChannelId, GuildId};
 use std::collections::HashMap;
 use tokio::select;
@@ -106,12 +106,13 @@ impl Coordinator {
 
     fn spawn_session(
         event_tx: &mpsc::UnboundedSender<CoordinatorEvent>,
+        id: RoomId,
         guild_id: GuildId,
         channel_id: ChannelId,
         internal_tx: &mpsc::UnboundedSender<CoordinatorInternalMessage>,
     ) -> mpsc::UnboundedSender<SessionMessage> {
         let (session_event_tx, session_event_rx) = broadcast::channel(1);
-        let room = Room::new(guild_id, channel_id, Moment::now());
+        let room = Room::new(id, guild_id, channel_id, Moment::now());
         let tx = start_session(room, internal_tx.clone(), session_event_tx);
 
         if let Err(err) = event_tx.send(CoordinatorEvent::Published {
@@ -129,6 +130,8 @@ impl Coordinator {
 
     pub async fn run(mut self) {
         info!("Starting coordinator loop");
+
+        let mut id_generator = RoomIdGenerator::new();
 
         let (internal_tx, mut internal_rx) = mpsc::unbounded_channel();
 
@@ -166,7 +169,7 @@ impl Coordinator {
 
                             if handle.has_suspended_events() {
                                 info!("Handle has suspended events. Creating new session and reconnecting handle...");
-                                let tx = Self::spawn_session(&self.event_tx, room.guild_id, room.channel_id, &internal_tx);
+                                let tx = Self::spawn_session(&self.event_tx, id_generator.next(), room.guild_id, room.channel_id, &internal_tx);
                                 handle.reconnect(tx);
                                 if let Err(err) = handle.resume_delivery() {
                                     error!("failed to resume handle: {}", err);
@@ -195,7 +198,7 @@ impl Coordinator {
                     match message {
                         CoordinatorMessage::Track { channel_id, guild_id, message } => {
                             let handle = self.sessions.entry(channel_id).or_insert_with(|| {
-                                let tx = Self::spawn_session(&self.event_tx, guild_id, channel_id, &internal_tx);
+                                let tx = Self::spawn_session(&self.event_tx, id_generator.next(), guild_id, channel_id, &internal_tx);
 
                                 SessionHandle::new(tx)
                             });

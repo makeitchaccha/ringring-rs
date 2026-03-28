@@ -1,3 +1,4 @@
+use crate::room::RoomId;
 use crate::room::types::{Moment, ParticipantLease, RoomLease, UserIdentity, VoiceStateFlags};
 use serenity::all::{ChannelId, GuildId, UserId};
 use std::sync::Arc;
@@ -26,6 +27,7 @@ pub enum RoomStatus {
 
 #[derive(Debug)]
 pub struct Room {
+    pub id: RoomId,
     pub guild_id: GuildId,
     pub channel_id: ChannelId,
     pub start: Moment,
@@ -35,8 +37,9 @@ pub struct Room {
 pub type RoomResult<T> = Result<T, RoomError>;
 
 impl Room {
-    pub fn new(guild_id: GuildId, channel_id: ChannelId, start: Moment) -> Self {
+    pub fn new(id: RoomId, guild_id: GuildId, channel_id: ChannelId, start: Moment) -> Self {
         Room {
+            id,
             guild_id,
             channel_id,
             start,
@@ -119,6 +122,7 @@ impl Room {
             .collect();
 
         RoomLease {
+            id: self.id,
             channel_id: self.channel_id,
             guild_id: self.guild_id,
             start: self.start,

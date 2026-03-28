@@ -10,7 +10,7 @@ use tokio::select;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 pub struct SessionHandle {
     suspended_events: Option<Vec<SessionMessage>>,
@@ -126,8 +126,16 @@ impl Session {
         }
     }
 
+    #[tracing::instrument(
+        name = "session",
+        skip(self),
+        fields(
+            channel = %self.room.channel_id,
+            id = %self.room.id,
+        )
+    )]
     pub async fn run(mut self) {
-        info!("Room session started");
+        info!("Session started");
 
         let mut idle_timer = IdleTimer::with_timeout(Duration::from_secs(60));
 
@@ -138,29 +146,33 @@ impl Session {
                 Some(cmd) = self.rx.recv() => {
                     match cmd {
                         SessionMessage::Connect{ now, identity, flags } => {
+                            info!(user = %identity.name, user_id = %identity.user_id, "Participant connected");
                             self.room.handle_connect(now, identity, flags).expect("invalid state");
                             idle_timer.abort();
                             let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
                         }
                         SessionMessage::Disconnect{ now, user_id } => {
+                            info!(%user_id, "Participant disconnected");
                             let status = self.room.handle_disconnect(now, user_id).expect("invalid state");
                             if status == RoomStatus::Empty {
+                                info!("Room is now empty, starting idle countdown");
                                 idle_timer.start_countdown();
                             }
                             let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
                         }
                         SessionMessage::Update{ now, user_id, flags } => {
+                            debug!(%user_id, ?flags, "Participant state updated");
                             self.room.handle_update(now, user_id, flags).expect("invalid state");
                             let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
                         }
 
                         SessionMessage::RequestShutdown{ reason, end } => {
                             if !self.room.is_empty() {
-                                info!("Session has requested to shutdown but is not empty. Reject shutdown.");
+                                warn!(?reason, "Shutdown requested but room is not empty. Rejecting.");
                                 if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
                                     channel_id: self.room.channel_id
                                 }) {
-                                    error!("failed to send shutdown rejection to coordinator: {}", err);
+                                    error!(error = %err, "Failed to send shutdown rejection");
                                     let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease(), end });
                                     break;
                                 }
@@ -168,11 +180,11 @@ impl Session {
                             }
 
                             if reason == ShutdownReason::Idle && !idle_timer.has_expired(Instant::now()) {
-                                info!("Session has requested to shutdown but is recently participant joined and then left. Reject shutdown.");
+                                info!("Shutdown requested but room is recently active. Rejecting.");
                                 if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
                                     channel_id: self.room.channel_id
                                 }) {
-                                    error!("failed to send shutdown rejection to coordinator: {}", err);
+                                    error!(error = %err, "Failed to send shutdown rejection");
                                     let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease(), end });
                                     break;
                                 }
@@ -181,26 +193,26 @@ impl Session {
 
                             let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease(), end });
                             if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }) {
-                                error!("failed to send shutdown ready to coordinator: {}", err);
+                                error!(error = %err, "Failed to send shutdown rejection");
                             }
 
-                            info!("Session is stopping...");
+                            info!("Session stopped");
                             break;
                         }
                     }
                 }
 
                 _ = &mut idle_timer => {
-                    info!("detected idle, starting idle-shutdown sequence...");
 
                     idle_timer.wait_for_shutdown_request();
                     if let Some(status) = idle_timer.status.as_ref() {
+                        info!(idle_since = ?status.start, "Detected idle, starting idle-shutdown sequence...");
                         if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id, since: self.room.start.at(status.start) }) {
-                            error!("failed to send idle notification to coordinator: {}", err);
+                            error!(error = %err, "Failed to send idle notification");
                             break;
                         }
                     }else {
-                        // fake timer alert!
+                        info!("Safety timer fired for long-running session; refreshing timer");
                         idle_timer.abort();
                     }
                 }
