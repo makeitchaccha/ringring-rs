@@ -53,18 +53,18 @@ impl Room {
     pub fn handle_connect(
         &mut self,
         now: Instant,
-        identification: UserIdentity,
+        identity: UserIdentity,
         flags: VoiceStateFlags,
     ) -> RoomResult<()> {
         debug!("handle connect");
-        if let Some(participant) = self.find_participant_mut(identification.user_id) {
+        if let Some(participant) = self.find_participant_mut(identity.user_id) {
             debug!("participant already exists");
             participant.connect(now, flags)?;
             return Ok(());
         }
 
         debug!("newly connected, create participant");
-        let mut participant = Participant::new(identification);
+        let mut participant = Participant::new(identity);
         participant.connect(now, flags)?;
         self.participants.push(participant);
         Ok(())

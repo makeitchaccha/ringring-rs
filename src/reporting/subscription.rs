@@ -8,7 +8,11 @@ pub struct Subscription {
     pub layout_config: LayoutConfig,
 }
 
-pub trait SubscriptionProvider {
+pub trait SubscriptionProvider: Send + Sync {
+    fn has_subscription(&self, channel: ChannelId) -> bool {
+        self.find_subscription(channel).is_some()
+    }
+
     fn find_subscription(&self, voice_channel: ChannelId) -> Option<Subscription>;
 }
 
@@ -20,8 +24,10 @@ impl StaticSubscriptionProvider {
     pub fn new(subscriptions: HashMap<ChannelId, Subscription>) -> Self {
         Self { subscriptions }
     }
+}
 
-    pub fn find_subscription(&self, voice_channel: ChannelId) -> Option<Subscription> {
+impl SubscriptionProvider for StaticSubscriptionProvider {
+    fn find_subscription(&self, voice_channel: ChannelId) -> Option<Subscription> {
         self.subscriptions.get(&voice_channel).cloned()
     }
 }

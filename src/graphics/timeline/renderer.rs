@@ -6,6 +6,7 @@ use tiny_skia::{
     Color, FillRule, FilterQuality, LineCap, Mask, NonZeroRect, Paint, PathBuilder, Pattern,
     Pixmap, PixmapPaint, Rect, Shader, SpreadMode, Stroke, Transform,
 };
+use tracing::warn;
 
 const TIMELINE_BAR_HEIGHT_RATIO: f32 = 4.0 / 7.0;
 const TIMELINE_BAR_TOP_RATIO: f32 = 3.0 / 14.0;
@@ -271,7 +272,7 @@ impl Renderer {
                 let ratio = delta.as_seconds_f32() / elapsed.as_seconds_f32();
                 let mut position = (ratio, 0.0f32).into();
                 transform.map_point(&mut position);
-                calligraphy.draw_text(
+                if let Err(err) = calligraphy.draw_text(
                     pixmap,
                     timeline
                         .tick
@@ -281,7 +282,10 @@ impl Renderer {
                     position.x,
                     position.y,
                     Color::BLACK,
-                );
+                ) {
+                    warn!("Failed to draw tick, skipping: {:?}", err);
+                    continue;
+                }
                 builder.move_to(ratio, 0.0);
                 builder.line_to(ratio, 1.0);
                 delta += interval;

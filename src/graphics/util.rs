@@ -1,7 +1,7 @@
+use cosmic_text::skrifa::outline::DrawError;
 use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tiny_skia::{Color, IntSize, Mask, Paint, Pixmap, PixmapPaint, PixmapRef, Rect, Transform};
-use tokio::sync::Mutex;
 use tracing::debug;
 
 #[derive(Clone)]
@@ -18,7 +18,7 @@ impl Default for Calligraphy {
 }
 
 impl Calligraphy {
-    pub async fn draw_text(
+    pub fn draw_text(
         &self,
         pixmap: &mut Pixmap,
         text: &str,
@@ -26,9 +26,9 @@ impl Calligraphy {
         x: f32,
         y: f32,
         color: Color,
-    ) {
-        let mut guard = self.inner.lock().await;
-        let (ref mut font_system, ref mut swash_cache) = *guard;
+    ) -> Result<(), &'static str> {
+        let mut inner_guard = self.inner.lock().map_err(|_| "Mutex poisoned")?;
+        let (ref mut font_system, ref mut swash_cache) = *inner_guard;
 
         let metrics = Metrics::new(font_size, font_size * 1.2);
         let mut buffer = Buffer::new(font_system, metrics);
@@ -111,5 +111,7 @@ impl Calligraphy {
                 Some(&mask),
             );
         }
+
+        Ok(())
     }
 }

@@ -1,5 +1,6 @@
 use crate::room::coordinator::CoordinatorInternalMessage;
 use crate::room::model::{Room, RoomStatus};
+use crate::room::session::ShutdownReason::Idle;
 use crate::room::types::{UserIdentity, VoiceStateFlags};
 use crate::room::{Moment, RoomLease};
 use serenity::all::UserId;
@@ -80,7 +81,7 @@ pub enum ShutdownReason {
 pub enum SessionMessage {
     Connect {
         now: Instant,
-        identification: UserIdentity,
+        identity: UserIdentity,
         flags: VoiceStateFlags,
     },
     Disconnect {
@@ -137,8 +138,8 @@ impl Session {
 
                 Some(cmd) = self.rx.recv() => {
                     match cmd {
-                        SessionMessage::Connect{ now, identification, flags } => {
-                            self.room.handle_connect(now, identification, flags).expect("invalid state");
+                        SessionMessage::Connect{ now, identity, flags } => {
+                            self.room.handle_connect(now, identity, flags).expect("invalid state");
                             idle_timer.abort();
                             let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
                         }
@@ -192,10 +193,16 @@ impl Session {
 
                 _ = &mut idle_timer => {
                     info!("detected idle, starting idle-shutdown sequence...");
+
                     idle_timer.wait_for_shutdown_request();
-                    if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id, since: self.room.start.at(idle_timer.status.as_ref().unwrap().start) }) {
-                        error!("failed to send idle notification to coordinator: {}", err);
-                        break;
+                    if let Some(status) = idle_timer.status.as_ref() {
+                        if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id, since: self.room.start.at(status.start) }) {
+                            error!("failed to send idle notification to coordinator: {}", err);
+                            break;
+                        }
+                    }else {
+                        // fake timer alert!
+                        idle_timer.abort();
                     }
                 }
             }
@@ -215,9 +222,11 @@ struct IdleStatus {
 }
 
 impl IdleTimer {
+    const FUTURE: Duration = Duration::from_hours(24);
+
     fn with_timeout(timeout: Duration) -> Self {
         Self {
-            inner: Box::pin(tokio::time::sleep(Duration::MAX)),
+            inner: Box::pin(tokio::time::sleep(IdleTimer::FUTURE)),
             timeout,
             status: None,
         }
@@ -237,16 +246,20 @@ impl IdleTimer {
     }
 
     fn wait_for_shutdown_request(&mut self) {
-        self.inner.as_mut().reset(Instant::now() + Duration::MAX);
+        self.inner
+            .as_mut()
+            .reset(Instant::now() + Duration::from_hours(24));
     }
 
     fn abort(&mut self) {
-        self.inner.as_mut().reset(Instant::now() + Duration::MAX);
+        self.inner
+            .as_mut()
+            .reset(Instant::now() + Duration::from_hours(24));
         self.status = None;
     }
 }
 
-impl std::future::Future for IdleTimer {
+impl Future for IdleTimer {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

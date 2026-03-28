@@ -50,7 +50,7 @@ pub enum CoordinatorEvent {
     },
 }
 
-enum CoordinatorMessage {
+pub enum CoordinatorMessage {
     Track {
         channel_id: ChannelId,
         guild_id: GuildId,

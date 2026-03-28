@@ -180,18 +180,17 @@ impl Reporter {
                         .sync(
                             &self.http,
                             embed,
-                            CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_URL),
+                            CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_FILE),
                         )
                         .await;
                 }
                 Ok(SessionEvent::Shutdown { room, end }) => {
                     let snapshot = RoomSnapshot::from_lease(room);
-                    let now = Instant::now();
-                    let elapsed = TimeDelta::from_std(now - snapshot.start.mono).unwrap();
+                    let elapsed = TimeDelta::from_std(end.mono - snapshot.start.mono).unwrap();
                     let embed = Self::generate_core_embed(snapshot.start.wall)
-                        .title("On Call")
+                        .title("Call Ended")
                         .description(format!(
-                            "Room is active on {}",
+                            "Room is closed in {}",
                             snapshot.channel_id.mention()
                         ))
                         .field(
@@ -215,7 +214,7 @@ impl Reporter {
                         .field("elapse", Self::format_time_delta(elapsed).to_string(), true)
                         .field(
                             "history",
-                            Self::format_history(now, snapshot.participants.as_ref()),
+                            Self::format_history(end.mono, snapshot.participants.as_ref()),
                             false,
                         );
 
@@ -231,7 +230,7 @@ impl Reporter {
                     };
 
                     let renderer = self.renderer.clone();
-                    let timeline = transform(now, &snapshot, &visuals, true);
+                    let timeline = transform(end.mono, &snapshot, &visuals, false);
                     let Ok(task) =
                         tokio::task::spawn_blocking(move || renderer.generate_png_image(&timeline))
                             .await
@@ -252,7 +251,7 @@ impl Reporter {
                         .sync(
                             &self.http,
                             embed,
-                            CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_URL),
+                            CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_FILE),
                         )
                         .await;
                 }

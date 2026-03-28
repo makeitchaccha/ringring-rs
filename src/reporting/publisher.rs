@@ -2,6 +2,7 @@ use crate::graphics::timeline::Renderer;
 use crate::graphics::timeline::layout::LayoutConfig;
 use crate::graphics::util::Calligraphy;
 use crate::infrastructure::AssetProvider;
+use crate::reporting::ReportAnchor;
 use crate::reporting::reporter::Reporter;
 use crate::reporting::subscription::SubscriptionProvider;
 use crate::room::CoordinatorEvent;
@@ -9,11 +10,10 @@ use serenity::all::Http;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
-use crate::reporting::ReportAnchor;
 
 pub struct Publisher {
     http: Arc<Http>,
-    subscription_provider: Box<dyn SubscriptionProvider>,
+    subscription_provider: Arc<dyn SubscriptionProvider>,
     asset_provider: AssetProvider,
     calligraphy: Calligraphy,
     event_rx: mpsc::UnboundedReceiver<CoordinatorEvent>,
@@ -22,7 +22,7 @@ pub struct Publisher {
 impl Publisher {
     pub fn new(
         http: Arc<Http>,
-        subscription_provider: Box<dyn SubscriptionProvider>,
+        subscription_provider: Arc<dyn SubscriptionProvider>,
         asset_provider: AssetProvider,
         event_rx: mpsc::UnboundedReceiver<CoordinatorEvent>,
     ) -> Self {
@@ -57,7 +57,7 @@ impl Publisher {
                         self.asset_provider.clone(),
                         Renderer::new(subscription.layout_config, self.calligraphy.clone()),
                         session_event_rx,
-                        ReportAnchor::new(subscription.report_channel)
+                        ReportAnchor::new(subscription.report_channel),
                     );
                 }
             }
