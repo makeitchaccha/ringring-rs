@@ -243,7 +243,7 @@ impl Renderer {
 
         pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 
-        let image = pixmap.encode_png().map_err(|e| "failed to encode image")?;
+        let image = pixmap.encode_png().map_err(|_e| "failed to encode image")?;
 
         Ok(image)
     }

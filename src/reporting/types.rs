@@ -1,9 +1,7 @@
 use crate::room::{Activity, Moment, ParticipantLease, RoomLease, UserIdentity};
 use serenity::all::{
-    ChannelId, CreateAttachment, CreateEmbed, CreateMessage, EditAttachments, EditMessage, GuildId,
-    Http, Message, MessageId, WebhookId,
+    ChannelId, CreateAttachment, CreateEmbed, CreateMessage, EditAttachments, EditMessage, GuildId, MessageId,
 };
-use serenity::builder::EditWebhookMessage;
 use serenity::http::CacheHttp;
 use std::time::Duration;
 use tokio::time::Instant;

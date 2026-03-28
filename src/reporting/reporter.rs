@@ -1,4 +1,4 @@
-use crate::graphics::{Timeline, timeline};
+use crate::graphics::timeline;
 use crate::infrastructure::{AssetProvider, MemberVisual};
 use crate::reporting::transformer::transform;
 use crate::reporting::types::RoomSnapshot;
@@ -6,13 +6,11 @@ use crate::reporting::{ParticipantSnapshot, ReportAnchor};
 use crate::room::SessionEvent;
 use chrono::TimeDelta;
 use serenity::all::{
-    CreateAttachment, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateMessage,
-    EditAttachments, EditMessage, FormattedTimestamp, FormattedTimestampStyle, GuildId, Http,
-    Mentionable, MessageFlags, Timestamp, UserId,
+    CreateAttachment, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp, FormattedTimestampStyle, GuildId, Http,
+    Mentionable, Timestamp, UserId,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};

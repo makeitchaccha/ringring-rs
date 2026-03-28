@@ -1,7 +1,7 @@
 use crate::reporting::subscription::SubscriptionProvider;
-use crate::room::{CoordinatorHandle, Room, SessionMessage, UserIdentity, VoiceStateFlags};
+use crate::room::{CoordinatorHandle, SessionMessage, UserIdentity};
 use serenity::all::{
-    Cache, ChannelId, Connection, Context, EventHandler, GuildId, Http, Timestamp, VoiceState,
+    ChannelId, Context, EventHandler, GuildId, Http, VoiceState,
 };
 use serenity::async_trait;
 use std::sync::Arc;

@@ -1,6 +1,5 @@
 use crate::room::coordinator::CoordinatorInternalMessage;
 use crate::room::model::{Room, RoomStatus};
-use crate::room::session::ShutdownReason::Idle;
 use crate::room::types::{UserIdentity, VoiceStateFlags};
 use crate::room::{Moment, RoomLease};
 use serenity::all::UserId;

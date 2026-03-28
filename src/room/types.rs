@@ -1,7 +1,6 @@
 use crate::room::model::Activity;
 use chrono::TimeDelta;
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
-use std::ops::Add;
 use std::sync::Arc;
 use tokio::time::Instant;
 

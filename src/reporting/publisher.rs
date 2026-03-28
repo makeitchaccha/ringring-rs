@@ -1,5 +1,4 @@
 use crate::graphics::timeline::Renderer;
-use crate::graphics::timeline::layout::LayoutConfig;
 use crate::graphics::util::Calligraphy;
 use crate::infrastructure::AssetProvider;
 use crate::reporting::ReportAnchor;

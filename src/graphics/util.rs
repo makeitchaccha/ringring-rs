@@ -1,4 +1,3 @@
-use cosmic_text::skrifa::outline::DrawError;
 use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
 use std::sync::{Arc, Mutex};
 use tiny_skia::{Color, IntSize, Mask, Paint, Pixmap, PixmapPaint, PixmapRef, Rect, Transform};
