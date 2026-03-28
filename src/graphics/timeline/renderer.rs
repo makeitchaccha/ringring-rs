@@ -34,7 +34,7 @@ impl Renderer {
         }
     }
 
-    pub fn generate_png_image(&self, timeline: &Timeline) -> Result<Vec<u8>, &'static str> {
+    pub fn generate_png_image(&self, timeline: Timeline) -> Result<Vec<u8>, &'static str> {
         let n_entries = timeline.entries.len();
         let layout = self.layout_config.calculate(n_entries);
 
@@ -63,7 +63,7 @@ impl Renderer {
         // Render ticks first.
         Self::render_ticks(
             &mut pixmap,
-            timeline,
+            &timeline,
             layout.full_timeline_bb(),
             &self.calligraphy,
         );

@@ -3,14 +3,15 @@ use crate::infrastructure::{AssetProvider, MemberVisual};
 use crate::reporting::transformer::transform;
 use crate::reporting::types::RoomSnapshot;
 use crate::reporting::{ParticipantSnapshot, ReportAnchor};
-use crate::room::SessionEvent;
+use crate::room::{Moment, SessionEvent};
 use chrono::TimeDelta;
 use serenity::all::{
-    CreateAttachment, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp, FormattedTimestampStyle, GuildId, Http,
-    Mentionable, Timestamp, UserId,
+    CreateAttachment, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp,
+    FormattedTimestampStyle, GuildId, Http, Mentionable, Timestamp, UserId,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
@@ -114,153 +115,168 @@ impl Reporter {
         Ok(visuals)
     }
 
+    async fn perform_report(
+        &mut self,
+        snapshot: &RoomSnapshot,
+        now: Moment,
+        ongoing: bool,
+    ) -> Result<(), String> {
+        let elapsed = TimeDelta::from_std(now.mono - snapshot.start.mono).unwrap();
+        let mut embed = Self::generate_core_embed(snapshot.start.wall)
+            .title(if ongoing { "On Call" } else { "Call Ended" })
+            .description(format!(
+                "Room is {} on {}",
+                if ongoing { "active" } else { "closed" },
+                snapshot.channel_id.mention()
+            ))
+            .field(
+                "start",
+                FormattedTimestamp::new(
+                    snapshot.start.wall,
+                    Some(FormattedTimestampStyle::ShortTime),
+                )
+                .to_string(),
+                true,
+            );
+
+        if !ongoing {
+            embed = embed.field(
+                "end",
+                FormattedTimestamp::new(now.wall, Some(FormattedTimestampStyle::ShortTime))
+                    .to_string(),
+                true,
+            );
+        }
+
+        embed = embed
+            .field("elapse", Self::format_time_delta(elapsed).to_string(), true)
+            .field(
+                "history",
+                Self::format_history(now.mono, snapshot.participants.as_ref()),
+                false,
+            );
+
+        let visuals = Self::fetch_member_visuals(
+            &self.asset_provider,
+            snapshot.guild_id,
+            snapshot.participants.as_ref(),
+        )
+        .await?;
+
+        let renderer = self.renderer.clone();
+        let timeline = transform(now.mono, snapshot, &visuals, ongoing);
+        let task = tokio::task::spawn_blocking(move || renderer.generate_png_image(timeline))
+            .await
+            .map_err(|e| format!("failed to spawn blocking task: {}", e))?;
+
+        let image = task.map_err(|e| format!("failed to generate image: {}", e))?;
+
+        self.anchor
+            .sync(
+                &self.http,
+                embed,
+                CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_FILE),
+            )
+            .await
+            .map_err(|e| format!("failed to sync anchor: {}", e))?;
+
+        Ok(())
+    }
+
     pub async fn run(mut self) {
-        let mut room_snapshot = None;
+        let mut scheduler = UpdateScheduler::new(
+            Duration::from_secs(5),
+            Duration::from_secs(20),
+            Duration::from_secs(60),
+        );
+        let mut last_snapshot: Option<RoomSnapshot> = None;
 
         loop {
-            match self.session_event_rx.recv().await {
-                Ok(SessionEvent::Updated { room }) => {
-                    let snapshot = RoomSnapshot::from_lease(room);
-                    let now = Instant::now();
-                    let elapsed = TimeDelta::from_std(now - snapshot.start.mono).unwrap();
-                    let embed = Self::generate_core_embed(snapshot.start.wall)
-                        .title("On Call")
-                        .description(format!(
-                            "Room is active on {}",
-                            snapshot.channel_id.mention()
-                        ))
-                        .field(
-                            "start",
-                            FormattedTimestamp::new(
-                                snapshot.start.wall,
-                                Some(FormattedTimestampStyle::ShortTime),
-                            )
-                            .to_string(),
-                            true,
-                        )
-                        .field("elapse", Self::format_time_delta(elapsed).to_string(), true)
-                        .field(
-                            "history",
-                            Self::format_history(now, snapshot.participants.as_ref()),
-                            false,
-                        );
+            tokio::select! {
+                biased;
 
-                    let Ok(visuals) = Self::fetch_member_visuals(
-                        &self.asset_provider,
-                        snapshot.guild_id,
-                        snapshot.participants.as_ref(),
-                    )
-                    .await
-                    else {
-                        warn!("failed to fetch member visuals");
-                        continue;
-                    };
-
-                    let renderer = self.renderer.clone();
-                    let timeline = transform(now, &snapshot, &visuals, true);
-                    let Ok(task) =
-                        tokio::task::spawn_blocking(move || renderer.generate_png_image(&timeline))
-                            .await
-                    else {
-                        error!("failed to spawn blocking task to generate image");
-                        continue;
-                    };
-
-                    room_snapshot = Some(snapshot);
-
-                    let Ok(image) = task else {
-                        error!("failed to generate image");
-                        continue;
-                    };
-
-                    let _ = self
-                        .anchor
-                        .sync(
-                            &self.http,
-                            embed,
-                            CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_FILE),
-                        )
-                        .await;
+                res = self.session_event_rx.recv() => {
+                    match res {
+                        Ok(SessionEvent::Updated { room }) => {
+                            last_snapshot = Some(RoomSnapshot::from_lease(room));
+                            scheduler.register_event();
+                        }
+                        Ok(SessionEvent::Shutdown { room, end }) => {
+                            let snapshot = RoomSnapshot::from_lease(room);
+                            if let Err(e) = self.perform_report(&snapshot, end, false).await {
+                                error!("Failed to perform final report: {}", e);
+                            }
+                            break;
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            warn!("Reporter lagged behind, skipped {} events. Catching up.", skipped);
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            info!("Session event rx closed, shutdown reporter");
+                            break;
+                        }
+                    }
                 }
-                Ok(SessionEvent::Shutdown { room, end }) => {
-                    let snapshot = RoomSnapshot::from_lease(room);
-                    let elapsed = TimeDelta::from_std(end.mono - snapshot.start.mono).unwrap();
-                    let embed = Self::generate_core_embed(snapshot.start.wall)
-                        .title("Call Ended")
-                        .description(format!(
-                            "Room is closed in {}",
-                            snapshot.channel_id.mention()
-                        ))
-                        .field(
-                            "start",
-                            FormattedTimestamp::new(
-                                snapshot.start.wall,
-                                Some(FormattedTimestampStyle::ShortTime),
-                            )
-                            .to_string(),
-                            true,
-                        )
-                        .field(
-                            "end",
-                            FormattedTimestamp::new(
-                                end.wall,
-                                Some(FormattedTimestampStyle::ShortTime),
-                            )
-                            .to_string(),
-                            true,
-                        )
-                        .field("elapse", Self::format_time_delta(elapsed).to_string(), true)
-                        .field(
-                            "history",
-                            Self::format_history(end.mono, snapshot.participants.as_ref()),
-                            false,
-                        );
 
-                    let Ok(visuals) = Self::fetch_member_visuals(
-                        &self.asset_provider,
-                        snapshot.guild_id,
-                        snapshot.participants.as_ref(),
-                    )
-                    .await
-                    else {
-                        warn!("failed to fetch member visuals");
-                        continue;
-                    };
-
-                    let renderer = self.renderer.clone();
-                    let timeline = transform(end.mono, &snapshot, &visuals, false);
-                    let Ok(task) =
-                        tokio::task::spawn_blocking(move || renderer.generate_png_image(&timeline))
-                            .await
-                    else {
-                        error!("failed to spawn blocking task to generate image");
-                        continue;
-                    };
-
-                    room_snapshot = Some(snapshot);
-
-                    let Ok(image) = task else {
-                        error!("failed to generate image");
-                        continue;
-                    };
-
-                    let _ = self
-                        .anchor
-                        .sync(
-                            &self.http,
-                            embed,
-                            CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_FILE),
-                        )
-                        .await;
-                }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    warn!("Reporter lagged behind, skipped {} events. Catching up to latest.", skipped);
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    info!("Session event rx closed, shutdown reporter");
-                    break;
+                _ = tokio::time::sleep_until(scheduler.next_deadline()) => {
+                    if let Some(snapshot) = &last_snapshot {
+                        let now = Moment::now();
+                        if let Err(e) = self.perform_report(snapshot, now, true).await {
+                            error!("Failed to perform regular report: {}", e);
+                        }
+                    }
+                    scheduler.complete();
                 }
             }
         }
+    }
+}
+
+
+pub struct UpdateScheduler {
+    soft_limit: Duration,
+    hard_limit: Duration,
+    heartbeat: Duration,
+
+    first_dirty_at: Option<Instant>,
+    last_event_at: Option<Instant>,
+    last_execution_at: Instant,
+}
+
+impl UpdateScheduler {
+    pub fn new(soft: Duration, hard: Duration, heartbeat: Duration) -> Self {
+        Self {
+            soft_limit: soft,
+            hard_limit: hard,
+            heartbeat,
+            first_dirty_at: None,
+            last_event_at: None,
+            last_execution_at: Instant::now(),
+        }
+    }
+
+    pub fn register_event(&mut self) {
+        let now = Instant::now();
+        if self.first_dirty_at.is_none() {
+            self.first_dirty_at = Some(now);
+        }
+        self.last_event_at = Some(now);
+    }
+
+    pub fn next_deadline(&self) -> Instant {
+        match (self.first_dirty_at, self.last_event_at) {
+            (Some(first), Some(last)) => {
+                let soft = last + self.soft_limit;
+                let hard = first + self.hard_limit;
+                soft.min(hard)
+            }
+            _ => self.last_execution_at + self.heartbeat,
+        }
+    }
+
+    pub fn complete(&mut self) {
+        self.last_execution_at = Instant::now();
+        self.first_dirty_at = None;
+        self.last_event_at = None;
     }
 }
