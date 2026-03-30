@@ -113,22 +113,6 @@ impl Reporter {
         format!("{:01}:{:02}", hours, minutes)
     }
 
-    fn format_history(now: Instant, participants: &[ParticipantSnapshot]) -> String {
-        participants
-            .iter()
-            .map(|participant| {
-                format!(
-                    "{} ({})",
-                    participant.identity.name,
-                    Self::format_time_delta(
-                        TimeDelta::from_std(participant.calculate_duration(now)).unwrap()
-                    )
-                )
-            })
-            .collect::<Vec<String>>()
-            .join("\n")
-    }
-
     async fn fetch_member_visuals(
         asset_provider: &AssetProvider,
         guild_id: GuildId,

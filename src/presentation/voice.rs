@@ -113,11 +113,11 @@ impl EventHandler for VoiceHandler {
                 }
             }
             FullEvent::VoiceStateUpdate { old, new, .. } => {
-                let channel_activity = ChannelActivity::from_voice_states(&old, &new);
+                let channel_activity = ChannelActivity::from_voice_states(old, new);
 
                 match channel_activity {
                     ChannelActivity::Connect { new_channel_id } => {
-                        self.handle_connection(&ctx.http, Instant::now(), new_channel_id, &new)
+                        self.handle_connection(&ctx.http, Instant::now(), new_channel_id, new)
                             .await;
                     }
                     ChannelActivity::Disconnect { old_channel_id } => {
@@ -133,11 +133,11 @@ impl EventHandler for VoiceHandler {
                     } => {
                         let now = Instant::now();
                         self.handle_disconnection(now, old_channel_id, old.as_ref().unwrap());
-                        self.handle_connection(&ctx.http, now, new_channel_id, &new)
+                        self.handle_connection(&ctx.http, now, new_channel_id, new)
                             .await;
                     }
                     ChannelActivity::Update { channel_id } => {
-                        self.handle_update(Instant::now(), channel_id, &new);
+                        self.handle_update(Instant::now(), channel_id, new);
                     }
                     ChannelActivity::Ignore => {}
                 }

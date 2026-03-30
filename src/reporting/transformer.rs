@@ -170,7 +170,7 @@ fn convert_to_streaming_sections(
             }
             None => {
                 if current_activity.flags().is_sharing_screen {
-                    streaming_start_activity = Some(&history[i]);
+                    streaming_start_activity = Some(history[i]);
                 }
             }
         }
