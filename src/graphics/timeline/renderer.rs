@@ -232,14 +232,16 @@ impl Renderer {
                 .transform(Transform::from_bbox(layout.full_timeline_bb()))
                 .unwrap()
         };
-        let mut paint = Paint::default();
-        paint.set_color(Color::from_rgba(0.2, 0.2, 0.2, 1.0).unwrap());
 
-        let mut stroke = tiny_skia::Stroke {
+        let paint = Paint {
+            shader: Shader::SolidColor(Color::from_rgba(0.2, 0.2, 0.2, 1.0).unwrap()),
+            ..Default::default()
+        };
+
+        let stroke = Stroke {
             width: STREAMING_STROKE_WIDTH,
             ..Default::default()
         };
-        stroke.width = STREAMING_STROKE_WIDTH;
 
         pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 
@@ -280,7 +282,7 @@ impl Renderer {
                         .as_str(),
                     20.0,
                     position.x,
-                    position.y,
+                    position.y - 5.0,
                     Color::BLACK,
                 ) {
                     warn!("Failed to draw tick, skipping: {:?}", err);

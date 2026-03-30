@@ -1,9 +1,9 @@
 use crate::room::{Activity, Moment, ParticipantLease, RoomLease, UserIdentity};
 use serenity::all::{
-    ChannelId, CreateAttachment, CreateEmbed, CreateMessage, EditAttachments, EditMessage, GuildId,
-    MessageId,
+    ChannelId, CreateAttachment, CreateComponent, CreateMessage, EditAttachments, EditMessage,
+    GuildId, Http, MessageFlags, MessageId,
 };
-use serenity::http::CacheHttp;
+use std::borrow::Cow;
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -65,19 +65,21 @@ impl ReportAnchor {
         }
     }
 
-    pub async fn sync(
+    pub async fn sync<'a>(
         &mut self,
-        http: impl CacheHttp,
-        embed: CreateEmbed,
-        attachment: CreateAttachment,
+        http: &Http,
+        component: impl Into<Cow<'a, [CreateComponent<'a>]>>,
+        attachment: CreateAttachment<'a>,
     ) -> Result<(), serenity::Error> {
         if let Some(message_id) = self.message_id {
             self.channel_id
+                .widen()
                 .edit_message(
                     http,
                     message_id,
                     EditMessage::new()
-                        .embed(embed)
+                        .flags(MessageFlags::IS_COMPONENTS_V2)
+                        .components(component)
                         .attachments(EditAttachments::new().add(attachment)),
                 )
                 .await?;
@@ -86,7 +88,14 @@ impl ReportAnchor {
         } else {
             let message = self
                 .channel_id
-                .send_message(http, CreateMessage::new().embed(embed).add_file(attachment))
+                .widen()
+                .send_message(
+                    http,
+                    CreateMessage::new()
+                        .flags(MessageFlags::IS_COMPONENTS_V2)
+                        .components(component)
+                        .add_file(attachment),
+                )
                 .await?;
 
             self.message_id = Some(message.id);

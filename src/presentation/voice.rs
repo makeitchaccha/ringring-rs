@@ -1,6 +1,6 @@
 use crate::reporting::subscription::SubscriptionProvider;
 use crate::room::{CoordinatorHandle, SessionMessage, UserIdentity};
-use serenity::all::{ChannelId, Context, EventHandler, GuildId, Http, VoiceState};
+use serenity::all::{ChannelId, Context, EventHandler, FullEvent, Http, VoiceState};
 use serenity::async_trait;
 use std::sync::Arc;
 use tokio::time::Instant;
@@ -87,54 +87,63 @@ impl VoiceHandler {
 
 #[async_trait]
 impl EventHandler for VoiceHandler {
-    async fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
-        debug!("cache is ready for guilds: {:?}", guilds);
-        let now = Instant::now();
-        let mut voice_states = Vec::new();
-
-        for guild_id in guilds {
-            let Some(guild_ref) = guild_id.to_guild_cached(&ctx) else {
-                continue;
-            };
-            for voice_state in guild_ref.voice_states.values() {
-                let mut voice_state = voice_state.clone();
-                voice_state.guild_id = Some(guild_id);
-                voice_states.push(voice_state);
-            }
-        }
-
-        for voice_state in voice_states {
-            if let Some(channel) = voice_state.channel_id {
-                self.handle_connection(&ctx.http, now, channel, &voice_state)
-                    .await;
-            }
-        }
-    }
-
-    async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
-        let channel_activity = ChannelActivity::from_voice_states(&old, &new);
-
-        match channel_activity {
-            ChannelActivity::Connect { new_channel_id } => {
-                self.handle_connection(&ctx.http, Instant::now(), new_channel_id, &new)
-                    .await;
-            }
-            ChannelActivity::Disconnect { old_channel_id } => {
-                self.handle_disconnection(Instant::now(), old_channel_id, &old.unwrap());
-            }
-            ChannelActivity::Move {
-                old_channel_id,
-                new_channel_id,
-            } => {
+    async fn dispatch(&self, ctx: &Context, event: &FullEvent) {
+        match event {
+            FullEvent::CacheReady { guilds, .. } => {
+                debug!("cache is ready for guilds: {:?}", guilds);
                 let now = Instant::now();
-                self.handle_disconnection(now, old_channel_id, &old.unwrap());
-                self.handle_connection(&ctx.http, now, new_channel_id, &new)
-                    .await;
+                let mut voice_states = Vec::new();
+
+                for &guild_id in guilds {
+                    let Some(guild_ref) = guild_id.to_guild_cached(&ctx.cache) else {
+                        continue;
+                    };
+                    for voice_state in guild_ref.voice_states.iter() {
+                        let mut voice_state = voice_state.clone();
+                        voice_state.guild_id = Some(guild_id);
+                        voice_states.push(voice_state);
+                    }
+                }
+
+                for voice_state in voice_states {
+                    if let Some(channel) = voice_state.channel_id {
+                        self.handle_connection(&ctx.http, now, channel, &voice_state)
+                            .await;
+                    }
+                }
             }
-            ChannelActivity::Update { channel_id } => {
-                self.handle_update(Instant::now(), channel_id, &new);
+            FullEvent::VoiceStateUpdate { old, new, .. } => {
+                let channel_activity = ChannelActivity::from_voice_states(&old, &new);
+
+                match channel_activity {
+                    ChannelActivity::Connect { new_channel_id } => {
+                        self.handle_connection(&ctx.http, Instant::now(), new_channel_id, &new)
+                            .await;
+                    }
+                    ChannelActivity::Disconnect { old_channel_id } => {
+                        self.handle_disconnection(
+                            Instant::now(),
+                            old_channel_id,
+                            old.as_ref().unwrap(),
+                        );
+                    }
+                    ChannelActivity::Move {
+                        old_channel_id,
+                        new_channel_id,
+                    } => {
+                        let now = Instant::now();
+                        self.handle_disconnection(now, old_channel_id, old.as_ref().unwrap());
+                        self.handle_connection(&ctx.http, now, new_channel_id, &new)
+                            .await;
+                    }
+                    ChannelActivity::Update { channel_id } => {
+                        self.handle_update(Instant::now(), channel_id, &new);
+                    }
+                    ChannelActivity::Ignore => {}
+                }
             }
-            ChannelActivity::Ignore => {}
+
+            _ => {}
         }
     }
 }
