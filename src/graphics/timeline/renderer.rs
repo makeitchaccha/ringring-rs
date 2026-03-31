@@ -1,10 +1,10 @@
-use crate::graphics::timeline::layout::{Layout, LayoutConfig};
+use crate::graphics::timeline::layout::LayoutConfig;
 use crate::graphics::util::Calligraphy;
-use crate::graphics::{FillStyle, Timeline, TimelineEntry};
+use crate::graphics::{FillStyle, Timeline};
 use chrono::{DurationRound, TimeDelta};
 use tiny_skia::{
     Color, FillRule, FilterQuality, LineCap, NonZeroRect, Paint, PathBuilder, Pattern, Pixmap,
-    Rect, Shader, SpreadMode, Stroke, Transform,
+    PixmapRef, Point, Rect, Shader, SpreadMode, Stroke, Transform,
 };
 use tracing::warn;
 
@@ -52,7 +52,17 @@ impl Renderer {
 
         // Then, Render fills.
         for (i, entry) in timeline.entries.iter().enumerate() {
-            Self::draw_avatar(&mut pixmap, entry, &layout, i);
+            let headline_bb = layout.headline_bb_for_entry(i);
+            let avatar_center = Point {
+                x: (headline_bb.left() + headline_bb.right()) / 2.0,
+                y: headline_bb.top() + (headline_bb.bottom() / 2.0),
+            };
+            Self::draw_avatar(
+                &mut pixmap,
+                entry.avatar.as_ref(),
+                avatar_center,
+                layout.avatar_size(),
+            );
 
             let timeline_bb = layout.timeline_bb_for_entry(i);
             let transformer = Transform::from_bbox(timeline_bb);
@@ -202,11 +212,8 @@ impl Renderer {
         Ok(image)
     }
 
-    fn draw_avatar(pixmap: &mut Pixmap, entry: &TimelineEntry, layout: &Layout, i: usize) {
-        let headline_bb = layout.headline_bb_for_entry(i);
-        let avatar = entry.avatar.as_ref();
-
-        let scale = layout.avatar_size() / avatar.width() as f32;
+    fn draw_avatar(pixmap: &mut Pixmap, avatar: PixmapRef, center: Point, avatar_size: f32) {
+        let scale = avatar_size / avatar.width() as f32;
         let shader = Pattern::new(
             avatar,
             SpreadMode::Pad,
@@ -215,13 +222,9 @@ impl Renderer {
             Transform::from_scale(scale, scale),
         );
 
-        let radius = layout.avatar_size() / 2.0;
+        let radius = avatar_size / 2.0;
 
-        let center = (
-            (headline_bb.left() + headline_bb.right()) / 2.0,
-            (headline_bb.top() + headline_bb.bottom()) / 2.0,
-        );
-        let transform = Transform::from_translate(center.0 - radius, center.1 - radius);
+        let transform = Transform::from_translate(center.x - radius, center.y - radius);
 
         let circle = PathBuilder::from_circle(radius, radius, radius).unwrap();
         pixmap.fill_path(
