@@ -221,15 +221,9 @@ impl Renderer {
             (headline_bb.left() + headline_bb.right()) / 2.0,
             (headline_bb.top() + headline_bb.bottom()) / 2.0,
         );
-        let transform = Transform::from_translate(
-            center.0 - radius,
-            center.1 - radius,
-        );
+        let transform = Transform::from_translate(center.0 - radius, center.1 - radius);
 
-        let circle = PathBuilder::from_circle(
-            radius, radius, radius
-        )
-        .unwrap();
+        let circle = PathBuilder::from_circle(radius, radius, radius).unwrap();
         pixmap.fill_path(
             &circle,
             &Paint {

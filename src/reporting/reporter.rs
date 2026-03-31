@@ -91,6 +91,7 @@ impl Reporter {
         title: &'a str,
         description: &'a str,
         timestamp: Timestamp,
+        rendering_elapsed: Duration,
     ) -> Report<'a> {
         Report {
             title: CreateTextDisplay::new(title),
@@ -99,8 +100,9 @@ impl Reporter {
                 CreateUnfurledMediaItem::new(Self::TIMELINE_IMAGE_URL),
             )]),
             footer: CreateTextDisplay::new(format!(
-                "-# ringring-rs v26.4.1 {}",
-                FormattedTimestamp::new(timestamp, Some(FormattedTimestampStyle::RelativeTime))
+                "-# ringring-rs v26.4.1 {}\n-# rendering {}ms",
+                FormattedTimestamp::new(timestamp, Some(FormattedTimestampStyle::RelativeTime)),
+                rendering_elapsed.as_millis(),
             )),
         }
     }
@@ -188,15 +190,20 @@ impl Reporter {
                 transform(snapshot.start.mono, now.mono, now.mono, snapshot, &visuals),
             )
         };
-        let report = Self::generate_report(&title, &description, now.wall);
 
         let renderer = self.renderer.clone();
 
-        let task = tokio::task::spawn_blocking(move || renderer.generate_png_image(timeline))
-            .await
-            .map_err(|e| format!("failed to spawn blocking task: {}", e))?;
+        let (task, rendering_elapsed) = tokio::task::spawn_blocking(move || {
+            let start = Instant::now();
+            let res = renderer.generate_png_image(timeline);
+            (res, start.elapsed())
+        })
+        .await
+        .map_err(|e| format!("failed to spawn blocking task: {}", e))?;
 
         let image = task.map_err(|e| format!("failed to generate image: {}", e))?;
+
+        let report = Self::generate_report(&title, &description, now.wall, rendering_elapsed);
 
         self.anchor
             .sync(
