@@ -3,8 +3,8 @@ use crate::graphics::util::Calligraphy;
 use crate::graphics::{FillStyle, Timeline, TimelineEntry};
 use chrono::{DurationRound, TimeDelta};
 use tiny_skia::{
-    Color, FillRule, FilterQuality, LineCap, NonZeroRect, Paint, PathBuilder, Pattern,
-    Pixmap, Rect, Shader, SpreadMode, Stroke, Transform,
+    Color, FillRule, FilterQuality, LineCap, NonZeroRect, Paint, PathBuilder, Pattern, Pixmap,
+    Rect, Shader, SpreadMode, Stroke, Transform,
 };
 use tracing::warn;
 
