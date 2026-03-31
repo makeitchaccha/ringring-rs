@@ -156,7 +156,7 @@ impl Reporter {
         let elapsed = TimeDelta::from_std(now.mono - snapshot.start.mono).unwrap();
         let (title, description, timeline) = if ongoing {
             (
-                format!("# 📢 {} 通話中", snapshot.channel_id.mention()),
+                format!("# 📢 通話中 > {}", snapshot.channel_id.mention()),
                 format!(
                     "**{}**開始 (**{}**経過)",
                     FormattedTimestamp::new(
@@ -175,7 +175,7 @@ impl Reporter {
             )
         } else {
             (
-                format!("# 🗄️ {} 通話終了", snapshot.channel_id.mention()),
+                format!("# 🗄️ 通話終了 > {}", snapshot.channel_id.mention()),
                 format!(
                     "**{}**開始~**{}**終了 (**{}**)",
                     FormattedTimestamp::new(
