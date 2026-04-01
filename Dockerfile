@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y \
     libfontconfig1 \
     libfreetype6 \
     fonts-dejavu-core \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/ringring-rs /app/ringring-rs
