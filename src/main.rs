@@ -17,11 +17,14 @@ use tracing::{error, info};
 
 #[tokio::main]
 async fn main() {
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Unable to install TLS");
     tracing_subscriber::fmt::init();
     info!("Starting ringring-rs");
 
     // 1. Load configuration from environment
-    let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
+    let token = Token::from_env("DISCORD_TOKEN").expect("Expected a token in the environment");
 
     let subscriptions = env::var("REPORT_CHANNELS")
         .ok()
@@ -61,11 +64,11 @@ async fn main() {
     let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;
 
     // 5. Build Serenity Client
-    let mut client = Client::builder(&token, intents)
-        .event_handler(VoiceHandler::new(
+    let mut client = Client::builder(token, intents)
+        .event_handler(Arc::new(VoiceHandler::new(
             subscription_provider.clone(),
             coordinator_handle,
-        ))
+        )))
         .await
         .expect("Err creating client");
 

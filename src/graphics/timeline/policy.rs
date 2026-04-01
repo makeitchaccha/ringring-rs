@@ -5,10 +5,17 @@ pub struct AspectRatioPolicy {
 }
 
 impl AspectRatioPolicy {
-    pub fn discord_thumbnail_4_3() -> AspectRatioPolicy {
+    pub fn discord_thumbnail_4x3() -> AspectRatioPolicy {
         AspectRatioPolicy {
             target_width_ratio: 4.0,
             target_height_ratio: 3.0,
+        }
+    }
+
+    pub fn discord_thumbnail_3x2() -> AspectRatioPolicy {
+        AspectRatioPolicy {
+            target_width_ratio: 3.0,
+            target_height_ratio: 2.0,
         }
     }
 

@@ -10,20 +10,16 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 pub fn transform(
+    from: Instant,
+    to: Instant,
     now: Instant,
     room: &RoomSnapshot,
     visuals: &HashMap<UserId, MemberVisual>,
-    ongoing: bool,
 ) -> Timeline {
-    let terminated_at = if ongoing {
-        calculate_auto_scale(room.start.mono, now)
-    } else {
-        now
-    };
-
     let entries = room
         .participants
         .iter()
+        .filter(|p| p.history.iter().any(|activity| activity.overlaps(from, to)))
         .map(|p| {
             let visual = visuals
                 .get(&p.identity.user_id)
@@ -31,16 +27,11 @@ pub fn transform(
 
             TimelineEntry {
                 avatar: visual.avatar.clone(),
-                voice_sections: convert_to_voice_sections(
-                    room.start.mono,
-                    now,
-                    terminated_at,
-                    p.history.as_ref(),
-                ),
+                voice_sections: convert_to_voice_sections(from, now, to, p.history.as_ref()),
                 streaming_sections: convert_to_streaming_sections(
-                    room.start.mono,
+                    from,
                     now,
-                    terminated_at,
+                    to,
                     p.history.as_ref(),
                 ),
                 active_color: visual.active_color,
@@ -51,16 +42,15 @@ pub fn transform(
         .collect();
 
     Timeline {
-        created_at: room.start.mono,
-        terminated_at,
+        created_at: from,
+        terminated_at: to,
         created_timestamp: room.start.wall.with_timezone(&Local),
-        indicator: if ongoing { Some(now) } else { None },
         entries,
-        tick: choose_suitable_tics(terminated_at - room.start.mono),
+        tick: choose_suitable_tics(to - from),
     }
 }
 
-fn calculate_auto_scale(start: Instant, end: Instant) -> Instant {
+pub fn calculate_auto_scale(start: Instant, end: Instant) -> Instant {
     const FRAMES: [Duration; 12] = [
         Duration::from_mins(1),
         Duration::from_mins(5),
@@ -123,22 +113,23 @@ fn convert_to_voice_sections(
     history: &[Activity],
 ) -> Vec<VoiceSection> {
     let duration_sec = (end - start).as_secs_f32();
-    let mut render_sections = Vec::new();
 
-    for current in history {
-        let fill_style = FillStyle::from_flags(current.flags());
+    history
+        .iter()
+        .filter(|activity| activity.overlaps(start, end))
+        .map(|activity| {
+            let fill_style = FillStyle::from_flags(activity.flags());
 
-        let start_ratio = (current.start() - start).as_secs_f32() / duration_sec;
-        let end_ratio = (current.end().unwrap_or(now) - start).as_secs_f32() / duration_sec;
+            let start_ratio = (activity.start() - start).as_secs_f32() / duration_sec;
+            let end_ratio = (activity.end().unwrap_or(now) - start).as_secs_f32() / duration_sec;
 
-        render_sections.push(VoiceSection {
-            start_ratio,
-            end_ratio,
-            fill_style,
+            VoiceSection {
+                start_ratio,
+                end_ratio,
+                fill_style,
+            }
         })
-    }
-
-    render_sections
+        .collect()
 }
 
 fn convert_to_streaming_sections(
@@ -152,6 +143,11 @@ fn convert_to_streaming_sections(
 
     // Always keep streaming start activity.
     let mut streaming_start_activity: Option<&Activity> = None;
+
+    let history: Vec<&Activity> = history
+        .iter()
+        .filter(|activity| activity.overlaps(start, end))
+        .collect();
 
     for i in 0..history.len() {
         let current_activity = &history[i];
@@ -174,7 +170,7 @@ fn convert_to_streaming_sections(
             }
             None => {
                 if current_activity.flags().is_sharing_screen {
-                    streaming_start_activity = Some(&history[i]);
+                    streaming_start_activity = Some(history[i]);
                 }
             }
         }

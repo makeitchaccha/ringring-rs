@@ -2,19 +2,50 @@ use crate::graphics::timeline;
 use crate::infrastructure::{AssetProvider, MemberVisual};
 use crate::reporting::transformer::transform;
 use crate::reporting::types::RoomSnapshot;
-use crate::reporting::{ParticipantSnapshot, ReportAnchor};
+use crate::reporting::{ParticipantSnapshot, ReportAnchor, transformer};
 use crate::room::{Moment, SessionEvent};
 use chrono::TimeDelta;
 use serenity::all::{
-    CreateAttachment, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, FormattedTimestamp,
-    FormattedTimestampStyle, GuildId, Http, Mentionable, Timestamp, UserId,
+    CreateAttachment, CreateComponent, CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay,
+    FormattedTimestamp, FormattedTimestampStyle, GuildId, Http, Mentionable, SeparatorSpacingSize,
+    Timestamp, UserId,
 };
+use serenity::builder::{CreateMediaGallery, CreateUnfurledMediaItem};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
+
+struct Report<'a> {
+    title: CreateTextDisplay<'a>,
+    description: CreateTextDisplay<'a>,
+    timeline: CreateMediaGallery<'a>,
+    footer: CreateTextDisplay<'a>,
+}
+
+impl<'a> Report<'a> {
+    fn generate_component(self) -> impl Into<Cow<'a, [CreateComponent<'a>]>> {
+        vec![
+            CreateComponent::TextDisplay(self.title),
+            CreateComponent::Separator(
+                CreateSeparator::new()
+                    .divider(true)
+                    .spacing(SeparatorSpacingSize::Large),
+            ),
+            CreateComponent::TextDisplay(self.description),
+            CreateComponent::MediaGallery(self.timeline),
+            CreateComponent::Separator(
+                CreateSeparator::new()
+                    .divider(true)
+                    .spacing(SeparatorSpacingSize::Large),
+            ),
+            CreateComponent::TextDisplay(self.footer),
+        ]
+    }
+}
 
 pub struct Reporter {
     http: Arc<Http>,
@@ -56,12 +87,24 @@ impl Reporter {
         tokio::spawn(reporter.run());
     }
 
-    fn generate_core_embed(timestamp: Timestamp) -> CreateEmbed {
-        CreateEmbed::new()
-            .author(CreateEmbedAuthor::new("ringring-rs"))
-            .image(Self::TIMELINE_IMAGE_URL)
-            .timestamp(timestamp)
-            .footer(CreateEmbedFooter::new("ringring-rs v26.03.27"))
+    fn generate_report<'a>(
+        title: &'a str,
+        description: &'a str,
+        timestamp: Timestamp,
+        rendering_elapsed: Duration,
+    ) -> Report<'a> {
+        Report {
+            title: CreateTextDisplay::new(title),
+            description: CreateTextDisplay::new(description),
+            timeline: CreateMediaGallery::new(vec![CreateMediaGalleryItem::new(
+                CreateUnfurledMediaItem::new(Self::TIMELINE_IMAGE_URL),
+            )]),
+            footer: CreateTextDisplay::new(format!(
+                "-# ringring-rs v26.4.1 {}\n-# rendering {}ms",
+                FormattedTimestamp::new(timestamp, Some(FormattedTimestampStyle::RelativeTime)),
+                rendering_elapsed.as_millis(),
+            )),
+        }
     }
 
     fn format_time_delta(delta: TimeDelta) -> String {
@@ -70,22 +113,6 @@ impl Reporter {
         let minutes = total_seconds % 60;
 
         format!("{:01}:{:02}", hours, minutes)
-    }
-
-    fn format_history(now: Instant, participants: &[ParticipantSnapshot]) -> String {
-        participants
-            .iter()
-            .map(|participant| {
-                format!(
-                    "{} ({})",
-                    participant.identity.name,
-                    Self::format_time_delta(
-                        TimeDelta::from_std(participant.calculate_duration(now)).unwrap()
-                    )
-                )
-            })
-            .collect::<Vec<String>>()
-            .join("\n")
     }
 
     async fn fetch_member_visuals(
@@ -121,41 +148,6 @@ impl Reporter {
         now: Moment,
         ongoing: bool,
     ) -> Result<(), String> {
-        let elapsed = TimeDelta::from_std(now.mono - snapshot.start.mono).unwrap();
-        let mut embed = Self::generate_core_embed(snapshot.start.wall)
-            .title(if ongoing { "On Call" } else { "Call Ended" })
-            .description(format!(
-                "Room is {} on {}",
-                if ongoing { "active" } else { "closed" },
-                snapshot.channel_id.mention()
-            ))
-            .field(
-                "start",
-                FormattedTimestamp::new(
-                    snapshot.start.wall,
-                    Some(FormattedTimestampStyle::ShortTime),
-                )
-                .to_string(),
-                true,
-            );
-
-        if !ongoing {
-            embed = embed.field(
-                "end",
-                FormattedTimestamp::new(now.wall, Some(FormattedTimestampStyle::ShortTime))
-                    .to_string(),
-                true,
-            );
-        }
-
-        embed = embed
-            .field("elapse", Self::format_time_delta(elapsed).to_string(), true)
-            .field(
-                "history",
-                Self::format_history(now.mono, snapshot.participants.as_ref()),
-                false,
-            );
-
         let visuals = Self::fetch_member_visuals(
             &self.asset_provider,
             snapshot.guild_id,
@@ -163,18 +155,60 @@ impl Reporter {
         )
         .await?;
 
+        let elapsed = TimeDelta::from_std(now.mono - snapshot.start.mono).unwrap();
+        let (title, description, timeline) = if ongoing {
+            (
+                format!("# 📢 通話中 > {}", snapshot.channel_id.mention()),
+                format!(
+                    "**{}**開始 (**{}**経過)",
+                    FormattedTimestamp::new(
+                        snapshot.start.wall,
+                        Some(FormattedTimestampStyle::ShortTime)
+                    ),
+                    Self::format_time_delta(elapsed)
+                ),
+                transform(
+                    snapshot.start.mono,
+                    transformer::calculate_auto_scale(snapshot.start.mono, now.mono),
+                    now.mono,
+                    snapshot,
+                    &visuals,
+                ),
+            )
+        } else {
+            (
+                format!("# 🗄️ 通話終了 > {}", snapshot.channel_id.mention()),
+                format!(
+                    "**{}**開始~**{}**終了 (**{}**)",
+                    FormattedTimestamp::new(
+                        snapshot.start.wall,
+                        Some(FormattedTimestampStyle::ShortTime)
+                    ),
+                    FormattedTimestamp::new(now.wall, Some(FormattedTimestampStyle::ShortTime)),
+                    Self::format_time_delta(elapsed)
+                ),
+                transform(snapshot.start.mono, now.mono, now.mono, snapshot, &visuals),
+            )
+        };
+
         let renderer = self.renderer.clone();
-        let timeline = transform(now.mono, snapshot, &visuals, ongoing);
-        let task = tokio::task::spawn_blocking(move || renderer.generate_png_image(timeline))
-            .await
-            .map_err(|e| format!("failed to spawn blocking task: {}", e))?;
+
+        let (task, rendering_elapsed) = tokio::task::spawn_blocking(move || {
+            let start = Instant::now();
+            let res = renderer.generate_png_image(timeline);
+            (res, start.elapsed())
+        })
+        .await
+        .map_err(|e| format!("failed to spawn blocking task: {}", e))?;
 
         let image = task.map_err(|e| format!("failed to generate image: {}", e))?;
+
+        let report = Self::generate_report(&title, &description, now.wall, rendering_elapsed);
 
         self.anchor
             .sync(
                 &self.http,
-                embed,
+                report.generate_component(),
                 CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_FILE),
             )
             .await

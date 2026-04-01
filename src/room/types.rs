@@ -96,9 +96,9 @@ pub struct VoiceStateFlags {
 impl From<&VoiceState> for VoiceStateFlags {
     fn from(state: &VoiceState) -> Self {
         VoiceStateFlags {
-            is_muted: state.mute || state.self_mute,
-            is_deafened: state.deaf || state.self_deaf,
-            is_sharing_screen: state.self_stream.unwrap_or(false),
+            is_muted: state.mute() || state.self_mute(),
+            is_deafened: state.deaf() || state.self_deaf(),
+            is_sharing_screen: state.self_stream().unwrap_or(false),
         }
     }
 }

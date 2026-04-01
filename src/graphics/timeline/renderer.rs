@@ -3,8 +3,8 @@ use crate::graphics::util::Calligraphy;
 use crate::graphics::{FillStyle, Timeline};
 use chrono::{DurationRound, TimeDelta};
 use tiny_skia::{
-    Color, FillRule, FilterQuality, LineCap, Mask, NonZeroRect, Paint, PathBuilder, Pattern,
-    Pixmap, PixmapPaint, Rect, Shader, SpreadMode, Stroke, Transform,
+    Color, FillRule, FilterQuality, LineCap, NonZeroRect, Paint, PathBuilder, Pattern, Pixmap,
+    PixmapRef, Point, Rect, Shader, SpreadMode, Stroke, Transform,
 };
 use tracing::warn;
 
@@ -38,68 +38,30 @@ impl Renderer {
         let n_entries = timeline.entries.len();
         let layout = self.layout_config.calculate(n_entries);
 
-        let path = {
-            let mut path_builder = PathBuilder::new();
-            path_builder.push_circle(
-                layout.avatar_size() / 2.0,
-                layout.avatar_size() / 2.0,
-                layout.avatar_size() / 2.0,
-            );
-            path_builder.push_circle(layout.avatar_size() / 2.0, layout.avatar_size() / 2.0, 0.0);
-            path_builder.finish().unwrap()
-        };
-
-        let avatar_mask = |transform| {
-            let mut avatar_mask =
-                Mask::new(layout.total_width() as u32, layout.total_height() as u32).unwrap();
-            avatar_mask.fill_path(&path, FillRule::EvenOdd, true, transform);
-            avatar_mask
-        };
-
         let mut pixmap = Pixmap::new(layout.total_width() as u32, layout.total_height() as u32)
             .expect("invalid pixmap size");
         pixmap.fill(Color::WHITE);
 
         // Render ticks first.
-        Self::render_ticks(
+        Self::draw_ticks(
             &mut pixmap,
             &timeline,
             layout.full_timeline_bb(),
             &self.calligraphy,
         );
 
-        let paint = PixmapPaint {
-            quality: FilterQuality::Bicubic,
-            ..Default::default()
-        };
-
         // Then, Render fills.
         for (i, entry) in timeline.entries.iter().enumerate() {
             let headline_bb = layout.headline_bb_for_entry(i);
-
-            let avatar = entry.avatar.as_ref();
-
-            let center = (
-                (headline_bb.left() + headline_bb.right()) / 2.0,
-                (headline_bb.top() + headline_bb.bottom()) / 2.0,
-            );
-            let transform = Transform::from_translate(
-                center.0 - layout.avatar_size() / 2.0,
-                center.1 - layout.avatar_size() / 2.0,
-            );
-
-            let avatar_transform = transform.pre_scale(
-                layout.avatar_size() / avatar.width() as f32,
-                layout.avatar_size() / avatar.height() as f32,
-            );
-
-            pixmap.draw_pixmap(
-                0,
-                0,
-                avatar,
-                &paint,
-                avatar_transform,
-                Some(&avatar_mask(transform)),
+            let avatar_center = Point {
+                x: (headline_bb.left() + headline_bb.right()) / 2.0,
+                y: headline_bb.top() + (headline_bb.bottom() / 2.0),
+            };
+            Self::draw_avatar(
+                &mut pixmap,
+                entry.avatar.as_ref(),
+                avatar_center,
+                layout.avatar_size(),
             );
 
             let timeline_bb = layout.timeline_bb_for_entry(i);
@@ -232,14 +194,16 @@ impl Renderer {
                 .transform(Transform::from_bbox(layout.full_timeline_bb()))
                 .unwrap()
         };
-        let mut paint = Paint::default();
-        paint.set_color(Color::from_rgba(0.2, 0.2, 0.2, 1.0).unwrap());
 
-        let mut stroke = tiny_skia::Stroke {
+        let paint = Paint {
+            shader: Shader::SolidColor(Color::from_rgba(0.2, 0.2, 0.2, 1.0).unwrap()),
+            ..Default::default()
+        };
+
+        let stroke = Stroke {
             width: STREAMING_STROKE_WIDTH,
             ..Default::default()
         };
-        stroke.width = STREAMING_STROKE_WIDTH;
 
         pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 
@@ -248,7 +212,34 @@ impl Renderer {
         Ok(image)
     }
 
-    fn render_ticks(
+    fn draw_avatar(pixmap: &mut Pixmap, avatar: PixmapRef, center: Point, avatar_size: f32) {
+        let scale = avatar_size / avatar.width() as f32;
+        let shader = Pattern::new(
+            avatar,
+            SpreadMode::Pad,
+            FilterQuality::Bicubic,
+            1.0,
+            Transform::from_scale(scale, scale),
+        );
+
+        let radius = avatar_size / 2.0;
+
+        let transform = Transform::from_translate(center.x - radius, center.y - radius);
+
+        let circle = PathBuilder::from_circle(radius, radius, radius).unwrap();
+        pixmap.fill_path(
+            &circle,
+            &Paint {
+                shader,
+                ..Default::default()
+            },
+            FillRule::Winding,
+            transform,
+            None,
+        );
+    }
+
+    fn draw_ticks(
         pixmap: &mut Pixmap,
         timeline: &Timeline,
         full_timeline_bb: NonZeroRect,
@@ -280,7 +271,7 @@ impl Renderer {
                         .as_str(),
                     20.0,
                     position.x,
-                    position.y,
+                    position.y - 5.0,
                     Color::BLACK,
                 ) {
                     warn!("Failed to draw tick, skipping: {:?}", err);

@@ -36,7 +36,7 @@ impl Default for LayoutConfig {
             margin: Margin {
                 left: 10.0,
                 top: 10.0,
-                right: 10.0,
+                right: 20.0,
                 bottom: 10.0,
             },
             label_area_height: 20.0,
@@ -44,7 +44,7 @@ impl Default for LayoutConfig {
             min_timeline_width: 900.0,
             entry_height: 70.0,
             avatar_size: 64.0,
-            aspect_ratio_policy: AspectRatioPolicy::discord_thumbnail_4_3(),
+            aspect_ratio_policy: AspectRatioPolicy::discord_thumbnail_3x2(),
         }
     }
 }

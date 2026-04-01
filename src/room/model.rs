@@ -244,6 +244,10 @@ impl Activity {
         prev.end == Some(self.start)
     }
 
+    pub fn overlaps(&self, range_start: Instant, range_end: Instant) -> bool {
+        self.start <= range_end && self.end.is_none_or(|end| range_start <= end)
+    }
+
     pub fn start(&self) -> Instant {
         self.start
     }
