@@ -1,6 +1,6 @@
 use crate::graphics::timeline::layout::LayoutConfig;
 use crate::graphics::util::Calligraphy;
-use crate::graphics::{FillStyle, Timeline};
+use crate::graphics::{FillStyle, Timeline, TimelineEntry};
 use chrono::{DurationRound, TimeDelta};
 use tiny_skia::{
     Color, FillRule, FilterQuality, LineCap, NonZeroRect, Paint, PathBuilder, Pattern, Pixmap,
@@ -55,7 +55,7 @@ impl Renderer {
             let headline_bb = layout.headline_bb_for_entry(i);
             let avatar_center = Point {
                 x: (headline_bb.left() + headline_bb.right()) / 2.0,
-                y: headline_bb.top() + (headline_bb.bottom() / 2.0),
+                y: (headline_bb.top() + (headline_bb.bottom())) / 2.0,
             };
             Self::draw_avatar(
                 &mut pixmap,
@@ -65,119 +65,7 @@ impl Renderer {
             );
 
             let timeline_bb = layout.timeline_bb_for_entry(i);
-            let transformer = Transform::from_bbox(timeline_bb);
-
-            let muted_pixmap = create_hatching_pattern(entry.active_color, entry.inactive_color);
-            let muted_shader = Pattern::new(
-                muted_pixmap.as_ref(),
-                SpreadMode::Repeat,
-                FilterQuality::Bicubic,
-                1.0,
-                Transform::identity(),
-            );
-            let active_shader = Shader::SolidColor(entry.active_color);
-            let deafened_shader = Shader::SolidColor(entry.inactive_color);
-
-            for section in &entry.voice_sections {
-                let paint = Paint {
-                    shader: match section.fill_style {
-                        FillStyle::Active => active_shader.clone(),
-                        FillStyle::Muted => muted_shader.clone(),
-                        FillStyle::Deafened => deafened_shader.clone(),
-                    },
-                    anti_alias: true,
-                    ..Default::default()
-                };
-
-                let path = {
-                    let mut path_builder = PathBuilder::new();
-                    path_builder.push_rect(
-                        Rect::from_ltrb(
-                            section.start_ratio,
-                            TIMELINE_BAR_TOP_RATIO,
-                            section.end_ratio,
-                            TIMELINE_BAR_BOTTOM_RATIO,
-                        )
-                        .unwrap()
-                        .transform(transformer)
-                        .unwrap(),
-                    );
-                    path_builder.finish().unwrap()
-                };
-
-                pixmap.fill_path(
-                    &path,
-                    &paint,
-                    FillRule::Winding,
-                    Transform::identity(),
-                    None,
-                );
-            }
-
-            let stroke = Stroke {
-                line_cap: LineCap::Round,
-                width: STROKE_WIDTH,
-                ..Default::default()
-            };
-
-            let paint = Paint {
-                shader: Shader::SolidColor(entry.active_color),
-                anti_alias: true,
-                ..Default::default()
-            };
-
-            let path_creator = |start_ratio, end_ratio| {
-                let mut path_builder = PathBuilder::new();
-                path_builder.push_rect(
-                    Rect::from_ltrb(
-                        start_ratio,
-                        TIMELINE_BAR_TOP_RATIO,
-                        end_ratio,
-                        TIMELINE_BAR_BOTTOM_RATIO,
-                    )
-                    .unwrap(),
-                );
-
-                path_builder
-                    .finish()
-                    .unwrap()
-                    .transform(transformer)
-                    .unwrap()
-            };
-
-            // normal strokes later: they may overlap the previous rendered fills.
-            for section in &entry.voice_sections {
-                pixmap.stroke_path(
-                    &path_creator(section.start_ratio, section.end_ratio),
-                    &paint,
-                    &stroke,
-                    Transform::identity(),
-                    None,
-                );
-            }
-
-            let stroke = Stroke {
-                line_cap: LineCap::Round,
-                width: STREAMING_STROKE_WIDTH,
-                ..Default::default()
-            };
-
-            let paint = Paint {
-                shader: Shader::SolidColor(entry.streaming_color),
-                anti_alias: true,
-                ..Default::default()
-            };
-
-            // finally, streaming strokes
-            for section in &entry.streaming_sections {
-                pixmap.stroke_path(
-                    &path_creator(section.start_ratio, section.end_ratio),
-                    &paint,
-                    &stroke,
-                    Transform::identity(),
-                    None,
-                );
-            }
+            Self::draw_timeline_row(&mut pixmap, &entry, timeline_bb);
         }
 
         // draw start and end
@@ -237,6 +125,112 @@ impl Renderer {
             transform,
             None,
         );
+    }
+
+    fn draw_timeline_row(pixmap: &mut Pixmap, entry: &TimelineEntry, row_bb: NonZeroRect) {
+        let row_transform = Transform::from_bbox(row_bb);
+        let active_paint = Paint {
+            shader: Shader::SolidColor(entry.active_color),
+            ..Default::default()
+        };
+        let hatching = create_hatching_pattern(entry.active_color, entry.inactive_color);
+        let muted_paint = Paint {
+            shader: Pattern::new(
+                hatching.as_ref(),
+                SpreadMode::Repeat,
+                FilterQuality::Bicubic,
+                1.0,
+                Transform::identity(),
+            ),
+            ..Default::default()
+        };
+        let deafened_paint = Paint {
+            shader: Shader::SolidColor(entry.inactive_color),
+            ..Default::default()
+        };
+
+        for style in [FillStyle::Active, FillStyle::Muted, FillStyle::Deafened] {
+            let mut pb = PathBuilder::new();
+            for section in entry
+                .voice_sections
+                .iter()
+                .filter(|s| s.fill_style == style)
+            {
+                pb.push_rect(
+                    Rect::from_ltrb(
+                        section.start_ratio,
+                        TIMELINE_BAR_TOP_RATIO,
+                        section.end_ratio,
+                        TIMELINE_BAR_BOTTOM_RATIO,
+                    )
+                    .unwrap(),
+                );
+            }
+            if let Some(path) = pb.finish().and_then(|path| path.transform(row_transform)) {
+                let paint = match style {
+                    FillStyle::Active => &active_paint,
+                    FillStyle::Muted => &muted_paint,
+                    FillStyle::Deafened => &deafened_paint,
+                };
+                pixmap.fill_path(&path, paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+
+        let mut pb = PathBuilder::new();
+        for section in entry.voice_sections.iter() {
+            pb.push_rect(
+                Rect::from_ltrb(
+                    section.start_ratio,
+                    TIMELINE_BAR_TOP_RATIO,
+                    section.end_ratio,
+                    TIMELINE_BAR_BOTTOM_RATIO,
+                )
+                .unwrap(),
+            );
+        }
+        if let Some(path) = pb.finish().and_then(|path| path.transform(row_transform)) {
+            pixmap.stroke_path(
+                &path,
+                &active_paint,
+                &Stroke {
+                    line_cap: LineCap::Round,
+                    width: STROKE_WIDTH,
+                    ..Default::default()
+                },
+                Transform::identity(),
+                None,
+            );
+        }
+
+        let mut pb = PathBuilder::new();
+        for section in entry.streaming_sections.iter() {
+            pb.push_rect(
+                Rect::from_ltrb(
+                    section.start_ratio,
+                    TIMELINE_BAR_TOP_RATIO,
+                    section.end_ratio,
+                    TIMELINE_BAR_BOTTOM_RATIO,
+                )
+                .unwrap(),
+            );
+        }
+        if let Some(path) = pb.finish().and_then(|path| path.transform(row_transform)) {
+            pixmap.stroke_path(
+                &path,
+                &Paint {
+                    shader: Shader::SolidColor(entry.streaming_color),
+                    anti_alias: true,
+                    ..Default::default()
+                },
+                &Stroke {
+                    line_cap: LineCap::Round,
+                    width: STREAMING_STROKE_WIDTH,
+                    ..Default::default()
+                },
+                Transform::identity(),
+                None,
+            );
+        }
     }
 
     fn draw_ticks(
