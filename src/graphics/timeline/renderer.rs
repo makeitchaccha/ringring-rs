@@ -276,7 +276,12 @@ impl Renderer {
                 delta += interval;
             }
 
-            builder.finish().unwrap().transform(transform).unwrap()
+            builder.finish().and_then(|path| path.transform(transform))
+        };
+
+        let Some(path) = path else {
+            // if no ticks
+            return;
         };
 
         let paint = Paint {
