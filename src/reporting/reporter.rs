@@ -6,9 +6,10 @@ use crate::reporting::{ParticipantSnapshot, ReportAnchor, transformer};
 use crate::room::{Moment, SessionEvent};
 use chrono::TimeDelta;
 use serenity::all::{
-    CreateAttachment, CreateComponent, CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay,
-    FormattedTimestamp, FormattedTimestampStyle, GuildId, Http, Mentionable, SeparatorSpacingSize,
-    Timestamp, UserId,
+    Colour, CreateAttachment, CreateComponent, CreateContainer, CreateContainerComponent,
+    CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay, FormattedTimestamp,
+    FormattedTimestampStyle, GuildId, Http, Mentionable, SeparatorSpacingSize, Timestamp, UserId,
+    colours,
 };
 use serenity::builder::{CreateMediaGallery, CreateUnfurledMediaItem};
 use std::borrow::Cow;
@@ -23,6 +24,7 @@ struct Report<'a> {
     title: CreateTextDisplay<'a>,
     description: CreateTextDisplay<'a>,
     timeline: CreateMediaGallery<'a>,
+    history: CreateContainer<'a>,
     footer: CreateTextDisplay<'a>,
 }
 
@@ -37,6 +39,7 @@ impl<'a> Report<'a> {
             ),
             CreateComponent::TextDisplay(self.description),
             CreateComponent::MediaGallery(self.timeline),
+            CreateComponent::Container(self.history),
             CreateComponent::Separator(
                 CreateSeparator::new()
                     .divider(true)
@@ -90,8 +93,10 @@ impl Reporter {
     fn generate_report<'a>(
         title: &'a str,
         description: &'a str,
+        history: &str,
         timestamp: Timestamp,
         rendering_elapsed: Duration,
+        accent_color: Colour,
     ) -> Report<'a> {
         Report {
             title: CreateTextDisplay::new(title),
@@ -99,6 +104,10 @@ impl Reporter {
             timeline: CreateMediaGallery::new(vec![CreateMediaGalleryItem::new(
                 CreateUnfurledMediaItem::new(Self::TIMELINE_IMAGE_URL),
             )]),
+            history: CreateContainer::new(vec![CreateContainerComponent::TextDisplay(
+                CreateTextDisplay::new(format!("### 履歴\n{}", history)),
+            )])
+            .accent_color(accent_color),
             footer: CreateTextDisplay::new(format!(
                 "-# ringring-rs v26.4.1 {}\n-# rendering {}ms",
                 FormattedTimestamp::new(timestamp, Some(FormattedTimestampStyle::RelativeTime)),
@@ -107,10 +116,23 @@ impl Reporter {
         }
     }
 
+    fn format_history(participants: &[ParticipantSnapshot], now: Instant) -> String {
+        participants
+            .iter()
+            .map(|p| {
+                let total_minutes = p.calculate_duration(now).as_secs() / 60;
+                let hours = total_minutes / 60;
+                let minutes = total_minutes % 60;
+                format!("- ⏳ `{:>2}:{:02}` {}", hours, minutes, p.identity.name)
+            })
+            .collect::<Vec<String>>()
+            .join("\n")
+    }
+
     fn format_time_delta(delta: TimeDelta) -> String {
-        let total_seconds = delta.num_minutes();
-        let hours = total_seconds / 60;
-        let minutes = total_seconds % 60;
+        let total_minutes = delta.num_minutes();
+        let hours = total_minutes / 60;
+        let minutes = total_minutes % 60;
 
         format!("{:01}:{:02}", hours, minutes)
     }
@@ -155,10 +177,12 @@ impl Reporter {
         )
         .await?;
 
-        let elapsed = TimeDelta::from_std(now.mono - snapshot.start.mono).unwrap();
-        let (title, description, timeline) = if ongoing {
+        let elapsed =
+            TimeDelta::from_std(now.mono - snapshot.start.mono).unwrap_or(TimeDelta::zero());
+        let history = Self::format_history(&snapshot.participants, now.mono);
+        let (title, description, timeline, colour) = if ongoing {
             (
-                format!("# 📢 通話中 > {}", snapshot.channel_id.mention()),
+                format!("## 📢【通話中】{}", snapshot.channel_id.mention()),
                 format!(
                     "**{}**開始 (**{}**経過)",
                     FormattedTimestamp::new(
@@ -174,10 +198,11 @@ impl Reporter {
                     snapshot,
                     &visuals,
                 ),
+                colours::branding::GREEN,
             )
         } else {
             (
-                format!("# 🗄️ 通話終了 > {}", snapshot.channel_id.mention()),
+                format!("## 🗄️【通話終了】{}", snapshot.channel_id.mention()),
                 format!(
                     "**{}**開始~**{}**終了 (**{}**)",
                     FormattedTimestamp::new(
@@ -188,6 +213,7 @@ impl Reporter {
                     Self::format_time_delta(elapsed)
                 ),
                 transform(snapshot.start.mono, now.mono, now.mono, snapshot, &visuals),
+                colours::branding::WHITE,
             )
         };
 
@@ -203,7 +229,14 @@ impl Reporter {
 
         let image = task.map_err(|e| format!("failed to generate image: {}", e))?;
 
-        let report = Self::generate_report(&title, &description, now.wall, rendering_elapsed);
+        let report = Self::generate_report(
+            &title,
+            &description,
+            &history,
+            now.wall,
+            rendering_elapsed,
+            colour,
+        );
 
         self.anchor
             .sync(

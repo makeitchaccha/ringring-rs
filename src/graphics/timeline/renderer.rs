@@ -65,7 +65,7 @@ impl Renderer {
             );
 
             let timeline_bb = layout.timeline_bb_for_entry(i);
-            Self::draw_timeline_row(&mut pixmap, &entry, timeline_bb);
+            Self::draw_timeline_row(&mut pixmap, entry, timeline_bb);
         }
 
         // draw start and end
@@ -158,9 +158,9 @@ impl Renderer {
             {
                 pb.push_rect(
                     Rect::from_ltrb(
-                        section.start_ratio,
+                        section.span.start(),
                         TIMELINE_BAR_TOP_RATIO,
-                        section.end_ratio,
+                        section.span.end(),
                         TIMELINE_BAR_BOTTOM_RATIO,
                     )
                     .unwrap(),
@@ -180,9 +180,9 @@ impl Renderer {
         for section in entry.voice_sections.iter() {
             pb.push_rect(
                 Rect::from_ltrb(
-                    section.start_ratio,
+                    section.span.start(),
                     TIMELINE_BAR_TOP_RATIO,
-                    section.end_ratio,
+                    section.span.end(),
                     TIMELINE_BAR_BOTTOM_RATIO,
                 )
                 .unwrap(),
@@ -206,9 +206,9 @@ impl Renderer {
         for section in entry.streaming_sections.iter() {
             pb.push_rect(
                 Rect::from_ltrb(
-                    section.start_ratio,
+                    section.span.start(),
                     TIMELINE_BAR_TOP_RATIO,
-                    section.end_ratio,
+                    section.span.end(),
                     TIMELINE_BAR_BOTTOM_RATIO,
                 )
                 .unwrap(),

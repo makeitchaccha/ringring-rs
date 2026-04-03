@@ -44,7 +44,7 @@ impl Default for LayoutConfig {
             min_timeline_width: 900.0,
             entry_height: 70.0,
             avatar_size: 64.0,
-            aspect_ratio_policy: AspectRatioPolicy::discord_thumbnail_3x2(),
+            aspect_ratio_policy: AspectRatioPolicy::discord_thumbnail_12x7(),
         }
     }
 }

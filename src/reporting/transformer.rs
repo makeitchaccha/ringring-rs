@@ -1,3 +1,4 @@
+use crate::graphics::timeline::view::RatioSpan;
 use crate::graphics::{FillStyle, StreamingSection, Tick, Timeline, TimelineEntry, VoiceSection};
 use crate::infrastructure::MemberVisual;
 use crate::reporting::RoomSnapshot;
@@ -25,15 +26,15 @@ pub fn transform(
                 .get(&p.identity.user_id)
                 .expect("visual must be pre-fetched before rendering.");
 
+            let filtered_history = p
+                .history
+                .iter()
+                .filter(|activity| activity.overlaps(from, to));
+
             TimelineEntry {
                 avatar: visual.avatar.clone(),
-                voice_sections: convert_to_voice_sections(from, now, to, p.history.as_ref()),
-                streaming_sections: convert_to_streaming_sections(
-                    from,
-                    now,
-                    to,
-                    p.history.as_ref(),
-                ),
+                voice_sections: convert_to_voice_sections(from, now, to, filtered_history.clone()),
+                streaming_sections: convert_to_streaming_sections(from, now, to, filtered_history),
                 active_color: visual.active_color,
                 streaming_color: visual.streaming_color,
                 inactive_color: visual.inactive_color,
@@ -106,37 +107,35 @@ fn choose_suitable_tics(duration: Duration) -> Tick {
     Tick::hours_grain(24)
 }
 
-fn convert_to_voice_sections(
+fn convert_to_voice_sections<'a>(
     start: Instant,
     now: Instant,
     end: Instant,
-    history: &[Activity],
+    history: impl IntoIterator<Item = &'a Activity>,
 ) -> Vec<VoiceSection> {
     let duration_sec = (end - start).as_secs_f32();
 
     history
-        .iter()
-        .filter(|activity| activity.overlaps(start, end))
-        .map(|activity| {
+        .into_iter()
+        .filter_map(|activity| {
             let fill_style = FillStyle::from_flags(activity.flags());
 
             let start_ratio = (activity.start() - start).as_secs_f32() / duration_sec;
             let end_ratio = (activity.end().unwrap_or(now) - start).as_secs_f32() / duration_sec;
 
-            VoiceSection {
-                start_ratio,
-                end_ratio,
+            Some(VoiceSection {
+                span: RatioSpan::clamped(start_ratio, end_ratio)?,
                 fill_style,
-            }
+            })
         })
         .collect()
 }
 
-fn convert_to_streaming_sections(
+fn convert_to_streaming_sections<'a>(
     start: Instant,
     now: Instant,
     end: Instant,
-    history: &[Activity],
+    history: impl IntoIterator<Item = &'a Activity>,
 ) -> Vec<StreamingSection> {
     let duration_sec = (end - start).as_secs_f32();
     let mut streaming_sections = Vec::new();
@@ -144,10 +143,7 @@ fn convert_to_streaming_sections(
     // Always keep streaming start activity.
     let mut streaming_start_activity: Option<&Activity> = None;
 
-    let history: Vec<&Activity> = history
-        .iter()
-        .filter(|activity| activity.overlaps(start, end))
-        .collect();
+    let history: Vec<&Activity> = history.into_iter().collect();
 
     for i in 0..history.len() {
         let current_activity = &history[i];
@@ -160,11 +156,11 @@ fn convert_to_streaming_sections(
                         (streaming_start.start() - start).as_secs_f32() / duration_sec;
                     let end_ratio = (current_activity.start() - start).as_secs_f32() / duration_sec;
 
-                    streaming_sections.push(StreamingSection {
-                        start_ratio,
-                        end_ratio,
-                    });
+                    let Some(span) = RatioSpan::clamped(start_ratio, end_ratio) else {
+                        continue;
+                    };
 
+                    streaming_sections.push(StreamingSection { span });
                     streaming_start_activity = None;
                 }
             }
@@ -188,11 +184,12 @@ fn convert_to_streaming_sections(
                 let end_ratio =
                     (current_activity.end().unwrap_or(now) - start).as_secs_f32() / duration_sec;
 
-                streaming_sections.push(StreamingSection {
-                    start_ratio,
-                    end_ratio,
-                });
                 streaming_start_activity = None;
+
+                let Some(span) = RatioSpan::clamped(start_ratio, end_ratio) else {
+                    continue;
+                };
+                streaming_sections.push(StreamingSection { span });
             }
         }
     }
