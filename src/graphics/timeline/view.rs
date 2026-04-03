@@ -104,13 +104,58 @@ impl FillStyle {
     }
 }
 
+pub struct RatioSpan {
+    start: f32,
+    end: f32,
+}
+
+impl RatioSpan {
+    pub fn new(start_ratio: f32, end_ratio: f32) -> Option<RatioSpan> {
+        if end_ratio <= start_ratio {
+            return None;
+        }
+
+        Some(RatioSpan {
+            start: Self::must_be_0to1(start_ratio)?,
+            end: Self::must_be_0to1(end_ratio)?,
+        })
+    }
+
+    #[inline]
+    fn must_be_0to1(x: f32) -> Option<f32> {
+        (0.0..=1.0).contains(&x).then_some(x)
+    }
+
+    pub fn clamped(start_ratio: f32, end_ratio: f32) -> Option<RatioSpan> {
+        let clamped_start = start_ratio.max(0.0);
+        let clamped_end = end_ratio.min(1.0);
+
+        if clamped_end <= clamped_start {
+            return None;
+        }
+
+        Some(RatioSpan {
+            start: clamped_start,
+            end: clamped_end,
+        })
+    }
+
+    #[inline]
+    pub fn start(&self) -> f32 {
+        self.start
+    }
+
+    #[inline]
+    pub fn end(&self) -> f32 {
+        self.end
+    }
+}
+
 pub struct VoiceSection {
-    pub start_ratio: f32,
-    pub end_ratio: f32,
+    pub span: RatioSpan,
     pub fill_style: FillStyle,
 }
 
 pub struct StreamingSection {
-    pub start_ratio: f32,
-    pub end_ratio: f32,
+    pub span: RatioSpan,
 }
