@@ -5,7 +5,12 @@ use crate::reporting::types::RoomSnapshot;
 use crate::reporting::{ParticipantSnapshot, ReportAnchor, transformer};
 use crate::room::{Moment, SessionEvent};
 use chrono::TimeDelta;
-use serenity::all::{CreateAttachment, CreateComponent, CreateContainer, CreateContainerComponent, CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay, FormattedTimestamp, FormattedTimestampStyle, GuildId, Http, Mentionable, SeparatorSpacingSize, Timestamp, UserId, colours, Colour};
+use serenity::all::{
+    Colour, CreateAttachment, CreateComponent, CreateContainer, CreateContainerComponent,
+    CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay, FormattedTimestamp,
+    FormattedTimestampStyle, GuildId, Http, Mentionable, SeparatorSpacingSize, Timestamp, UserId,
+    colours,
+};
 use serenity::builder::{CreateMediaGallery, CreateUnfurledMediaItem};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -193,7 +198,7 @@ impl Reporter {
                     snapshot,
                     &visuals,
                 ),
-                colours::branding::GREEN
+                colours::branding::GREEN,
             )
         } else {
             (
@@ -208,7 +213,7 @@ impl Reporter {
                     Self::format_time_delta(elapsed)
                 ),
                 transform(snapshot.start.mono, now.mono, now.mono, snapshot, &visuals),
-                colours::branding::WHITE
+                colours::branding::WHITE,
             )
         };
 
@@ -224,8 +229,14 @@ impl Reporter {
 
         let image = task.map_err(|e| format!("failed to generate image: {}", e))?;
 
-        let report =
-            Self::generate_report(&title, &description, &history, now.wall, rendering_elapsed, colour);
+        let report = Self::generate_report(
+            &title,
+            &description,
+            &history,
+            now.wall,
+            rendering_elapsed,
+            colour,
+        );
 
         self.anchor
             .sync(

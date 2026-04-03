@@ -65,7 +65,7 @@ impl Renderer {
             );
 
             let timeline_bb = layout.timeline_bb_for_entry(i);
-            Self::draw_timeline_row(&mut pixmap, &entry, timeline_bb);
+            Self::draw_timeline_row(&mut pixmap, entry, timeline_bb);
         }
 
         // draw start and end
