@@ -115,11 +115,10 @@ impl Reporter {
         participants
             .iter()
             .map(|p| {
-                format!(
-                    "`{:>4.1} hrs` {}",
-                    p.calculate_duration(now).as_secs_f64() / 3600.0,
-                    p.identity.name
-                )
+                let total_minutes = p.calculate_duration(now).as_secs() / 60;
+                let hours = total_minutes / 60;
+                let minutes = total_minutes % 60;
+                format!("- ⏳ `{:>2}:{:02}` {}", hours, minutes, p.identity.name)
             })
             .collect::<Vec<String>>()
             .join("\n")
