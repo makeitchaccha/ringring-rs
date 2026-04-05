@@ -253,7 +253,7 @@ impl Reporter {
     pub async fn run(mut self) {
         let mut scheduler = UpdateScheduler::new(
             Duration::from_secs(5),
-            Duration::from_secs(20),
+            Duration::from_secs(15),
             Duration::from_secs(60),
         );
         let mut last_snapshot: Option<RoomSnapshot> = None;

@@ -1,80 +1,136 @@
-use self::FillStyle::{Active, Deafened, Muted};
 use crate::room::VoiceStateFlags;
-use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
+use chrono::{Datelike, DurationRound, NaiveDateTime, TimeDelta, Timelike};
+use std::fmt::Debug;
 use std::time::Duration;
 use tiny_skia::{Color, Pixmap};
 use tokio::time::Instant;
 
-#[derive(Debug, Copy, Clone)]
-pub struct Tick {
-    pub interval: Duration,
-    with_sec: bool,
+pub struct AxisConfig {
+    major: MajorTickConfig,
+    minor_divisions: Option<u32>,
 }
 
-impl Tick {
-    pub const fn secs_grain(secs: u64) -> Self {
+impl AxisConfig {
+    pub fn only_major(major: MajorTickConfig) -> Self {
         Self {
-            interval: Duration::from_secs(secs),
-            with_sec: true,
+            major,
+            minor_divisions: None,
         }
     }
 
-    pub const fn mins_grain(mins: u64) -> Self {
-        Self {
-            interval: Duration::from_mins(mins),
-            with_sec: false,
+    pub const fn with_minor(
+        major: MajorTickConfig,
+        minor_divisions: u32,
+    ) -> Result<Self, &'static str> {
+        if minor_divisions == 0 {
+            return Err("Divisions must be non-zero");
         }
+        Ok(Self {
+            major,
+            minor_divisions: Some(minor_divisions),
+        })
     }
 
-    pub const fn hours_grain(hours: u64) -> Self {
-        Self {
-            interval: Duration::from_hours(hours),
-            with_sec: false,
-        }
-    }
+    pub fn generate_tick(&self, start: NaiveDateTime, end: NaiveDateTime) -> Vec<Tick> {
+        let step = TimeDelta::from_std(self.major.interval).unwrap();
+        let divisions = self.minor_divisions.unwrap_or(1) as i32;
 
-    pub fn format<T: TimeZone>(&self, timestamp: DateTime<T>) -> String {
-        let year = timestamp.year();
-        let month = timestamp.month();
-        let day = timestamp.day();
-        let hours = timestamp.hour();
-        let minutes = timestamp.minute();
+        let initial = start.duration_trunc(step).unwrap();
 
-        let start_of_day = hours == 0 && minutes == 0;
-        let start_of_year = year == 0 && start_of_day;
+        let elapsed = end - start;
 
-        if self.with_sec {
-            let seconds = timestamp.second();
-
-            match (start_of_year, start_of_day) {
-                (true, _) => format!(
-                    "{:04}/{:02}/{:02}\n{:02}:{:02}:{:02}",
-                    year, month, day, hours, minutes, seconds
-                ),
-                (_, true) => format!(
-                    "{:02}/{:02}\n{:02}:{:02}:{:02}",
-                    month, day, hours, minutes, seconds
-                ),
-                (_, _) => format!("{:02}:{:02}:{:02}", hours, minutes, seconds),
+        let mut ticks = Vec::new();
+        for i in 0.. {
+            let current = initial + step * i / divisions;
+            if current < start {
+                continue;
             }
-        } else {
-            match (start_of_year, start_of_day) {
-                (true, _) => format!(
-                    "{:04}/{:02}/{:02}\n{:02}:{:02}",
-                    year, month, day, hours, minutes
-                ),
-                (_, true) => format!("{:02}/{:02}\n{:02}:{:02}", month, day, hours, minutes),
-                (_, _) => format!("{:02}:{:02}", hours, minutes),
+            if current > end {
+                break;
+            }
+
+            let ratio = (current - start).as_seconds_f32() / elapsed.as_seconds_f32();
+            if i % divisions == 0 {
+                ticks.push(Tick {
+                    ratio,
+                    kind: TickKind::Major {
+                        format: self.major.determine_time_format(current),
+                        timestamp: current,
+                    },
+                })
+            } else {
+                ticks.push(Tick {
+                    ratio,
+                    kind: TickKind::Minor,
+                })
             }
         }
+
+        ticks
+    }
+}
+
+pub struct Tick {
+    pub ratio: f32,
+    pub kind: TickKind,
+}
+
+pub enum TickKind {
+    Major {
+        format: &'static [&'static str],
+        timestamp: NaiveDateTime,
+    },
+    Minor,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct MajorTickConfig {
+    pub interval: Duration,
+    pub format_normal: &'static [&'static str],
+    pub format_date: Option<&'static [&'static str]>,
+    pub format_year: Option<&'static [&'static str]>,
+}
+
+impl MajorTickConfig {
+    pub const fn with_sec(interval: Duration) -> Self {
+        Self {
+            interval,
+            format_normal: &["%H:%M:%S"],
+            format_date: Some(&["%H:%M:%S", "%m/%d"]),
+            format_year: Some(&["%H:%M:%S", "%Y/%m/%d"]),
+        }
+    }
+
+    pub const fn without_sec(interval: Duration) -> Self {
+        Self {
+            interval,
+            format_normal: &["%H:%M"],
+            format_date: Some(&["%H:%M", "%m/%d"]),
+            format_year: Some(&["%H:%M", "%Y/%m/%d"]),
+        }
+    }
+
+    pub fn determine_time_format(&self, time: NaiveDateTime) -> &'static [&'static str] {
+        let start_of_day = time.hour() == 0 && time.minute() == 0;
+        let start_of_year = start_of_day && time.month() == 1 && time.day() == 1;
+
+        if start_of_year && let Some(format_year) = self.format_year {
+            return format_year;
+        }
+
+        if start_of_day && let Some(format_date) = self.format_date {
+            return format_date;
+        }
+
+        self.format_normal
     }
 }
 
 pub struct Timeline {
     pub created_at: Instant,
     pub terminated_at: Instant,
-    pub created_timestamp: DateTime<Local>,
-    pub tick: Tick,
+    pub created_timestamp: NaiveDateTime,
+    pub axis: AxisConfig,
     pub entries: Vec<TimelineEntry>,
 }
 
@@ -97,9 +153,9 @@ pub enum FillStyle {
 impl FillStyle {
     pub fn from_flags(flags: VoiceStateFlags) -> FillStyle {
         match (flags.is_deafened, flags.is_muted) {
-            (true, _) => Deafened,
-            (_, true) => Muted,
-            (_, _) => Active,
+            (true, _) => FillStyle::Deafened,
+            (_, true) => FillStyle::Muted,
+            (_, _) => FillStyle::Active,
         }
     }
 }
