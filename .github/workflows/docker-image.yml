@@ -20,7 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [debian, alpine]
+        variant: [bookworm, alpine]
+        arch: [amd64, arm64]
         include:
           - arch: amd64
             platform: linux/amd64
@@ -73,8 +74,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     strategy:
+      fail-fast: false
       matrix:
-        variant: [debian, alpine]
+        variant: [bookworm, alpine]
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -91,18 +93,32 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY_IMAGE }}
-          flavor: |
-            suffix=${{ matrix.variant == 'alpine' && '-alpine' || '' }},onlatest=true
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,prefix=
+            # Versioned tags with variant suffix
+            type=semver,pattern={{version}},suffix=-${{ matrix.variant }}
+            type=semver,pattern={{major}}.{{minor}},suffix=-${{ matrix.variant }}
+            type=semver,pattern={{major}},suffix=-${{ matrix.variant }}
+            
+            # Plain versioned tags (default to bookworm)
+            type=semver,pattern={{version}},enable=${{ matrix.variant == 'bookworm' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ matrix.variant == 'bookworm' }}
+            type=semver,pattern={{major}},enable=${{ matrix.variant == 'bookworm' }}
+            
+            # Branch/PR tags
+            type=ref,event=branch,suffix=-${{ matrix.variant }}
+            type=ref,event=pr,suffix=-${{ matrix.variant }}
+            
+            # Latest tags
+            type=raw,value=latest,enable=${{ matrix.variant == 'bookworm' && github.ref == 'refs/heads/main' }}
+            type=raw,value=latest-${{ matrix.variant }},enable=${{ github.ref == 'refs/heads/main' }}
+            
+            # Special 'alpine' tag
             type=raw,value=alpine,enable=${{ matrix.variant == 'alpine' && github.ref == 'refs/heads/main' }}
+            
+            # SHA tag
+            type=sha,prefix=,suffix=-${{ matrix.variant }}
 
-      - name: Download digests
+      - name: Download all digests
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
@@ -117,4 +133,4 @@ jobs:
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}${{ matrix.variant == 'alpine' && '-alpine' || '' }}
+          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}-${{ matrix.variant }}
