@@ -1,7 +1,7 @@
 use crate::graphics::timeline::layout::LayoutConfig;
-use crate::graphics::util::Calligraphy;
+use crate::graphics::timeline::view::TickKind;
+use crate::graphics::util::{Calligraphy, TextSpec};
 use crate::graphics::{FillStyle, Timeline, TimelineEntry};
-use chrono::{DurationRound, TimeDelta};
 use tiny_skia::{
     Color, FillRule, FilterQuality, LineCap, NonZeroRect, Paint, PathBuilder, Pattern, Pixmap,
     PixmapRef, Point, Rect, Shader, SpreadMode, Stroke, Transform,
@@ -12,6 +12,9 @@ const TIMELINE_BAR_HEIGHT_RATIO: f32 = 4.0 / 7.0;
 const TIMELINE_BAR_TOP_RATIO: f32 = 3.0 / 14.0;
 
 const TIMELINE_BAR_BOTTOM_RATIO: f32 = TIMELINE_BAR_TOP_RATIO + TIMELINE_BAR_HEIGHT_RATIO;
+
+const MAJOR_TICK_COLOR: u8 = 0x1a;
+const MINOR_TICK_COLOR: u8 = 0x4d;
 
 const STROKE_WIDTH: f32 = 2.0;
 const STREAMING_STROKE_WIDTH: f32 = 5.0;
@@ -239,60 +242,92 @@ impl Renderer {
         full_timeline_bb: NonZeroRect,
         calligraphy: &Calligraphy,
     ) {
-        let interval = TimeDelta::from_std(timeline.tick.interval).unwrap();
-        let base_timestamp = timeline.created_timestamp.duration_trunc(interval).unwrap();
+        let ticks = timeline.axis.generate_tick(
+            timeline.created_timestamp,
+            timeline.created_timestamp + (timeline.terminated_at - timeline.created_at),
+        );
 
-        let mut delta = base_timestamp - timeline.created_timestamp;
-        if delta < TimeDelta::zero() {
-            delta += interval;
-        }
-        let elapsed = TimeDelta::from_std(timeline.terminated_at - timeline.created_at).unwrap();
+        let mut major_pb = PathBuilder::new();
+        let mut minor_pb = PathBuilder::new();
+        let mut labels = Vec::new();
 
         let transform = Transform::from_bbox(full_timeline_bb);
 
-        let path = {
-            let mut builder = PathBuilder::new();
+        for tick in ticks {
+            match tick.kind {
+                TickKind::Major { format, timestamp } => {
+                    major_pb.move_to(tick.ratio, 0.0);
+                    major_pb.line_to(tick.ratio, 1.0);
 
-            while delta < elapsed {
-                let ratio = delta.as_seconds_f32() / elapsed.as_seconds_f32();
-                let mut position = (ratio, 0.0f32).into();
-                transform.map_point(&mut position);
-                if let Err(err) = calligraphy.draw_text(
-                    pixmap,
-                    timeline
-                        .tick
-                        .format(timeline.created_timestamp + delta)
-                        .as_str(),
-                    20.0,
-                    position.x,
-                    position.y - 5.0,
-                    Color::BLACK,
-                ) {
-                    warn!("Failed to draw tick, skipping: {:?}", err);
-                    continue;
+                    let mut point = Point {
+                        x: tick.ratio,
+                        y: 0.0,
+                    };
+                    transform.map_point(&mut point);
+
+                    for (i, line) in format.iter().enumerate() {
+                        labels.push(TextSpec {
+                            content: timestamp.format(line).to_string().into(),
+                            font_size: 20.0,
+                            pos: point - (0.0, 5.0 + i as f32 * 25.0).into(),
+                            color: Color::BLACK,
+                        });
+                    }
                 }
-                builder.move_to(ratio, 0.0);
-                builder.line_to(ratio, 1.0);
-                delta += interval;
+                TickKind::Minor => {
+                    minor_pb.move_to(tick.ratio, 0.0);
+                    minor_pb.line_to(tick.ratio, 1.0);
+                }
             }
+        }
 
-            builder.finish().and_then(|path| path.transform(transform))
-        };
+        if let Some(path) = major_pb.finish().and_then(|path| path.transform(transform)) {
+            pixmap.stroke_path(
+                &path,
+                &Paint {
+                    shader: Shader::SolidColor(Color::from_rgba8(
+                        MAJOR_TICK_COLOR,
+                        MAJOR_TICK_COLOR,
+                        MAJOR_TICK_COLOR,
+                        255,
+                    )),
+                    ..Default::default()
+                },
+                &Stroke {
+                    width: 1.0,
+                    ..Default::default()
+                },
+                Transform::identity(),
+                None,
+            );
+        }
 
-        let Some(path) = path else {
-            // if no ticks
-            return;
-        };
+        if let Some(path) = minor_pb.finish().and_then(|path| path.transform(transform)) {
+            pixmap.stroke_path(
+                &path,
+                &Paint {
+                    shader: Shader::SolidColor(Color::from_rgba8(
+                        MINOR_TICK_COLOR,
+                        MINOR_TICK_COLOR,
+                        MINOR_TICK_COLOR,
+                        255,
+                    )),
+                    ..Default::default()
+                },
+                &Stroke {
+                    width: 0.5,
+                    ..Default::default()
+                },
+                Transform::identity(),
+                None,
+            );
+        }
 
-        let paint = Paint {
-            shader: Shader::SolidColor(Color::from_rgba(0.4, 0.4, 0.4, 1.0).unwrap()),
-            ..Default::default()
-        };
-        let stroke = Stroke {
-            width: 1.0,
-            ..Default::default()
-        };
-        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        if !labels.is_empty()
+            && let Err(err) = calligraphy.draw_text(pixmap, &labels)
+        {
+            warn!(error = %err, "failed to draw text");
+        }
     }
 }
 
