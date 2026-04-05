@@ -13,7 +13,7 @@ pub enum RoomError {
     ParticipantNotFound,
 
     #[error("Failed to process activity: {0}")]
-    Activity(#[from] ActivityError),
+    ParticipantInconsistency(#[from] ParticipantError),
 
     #[error("Room has been already disposed.")]
     AlreadyDisposed,
@@ -131,56 +131,133 @@ impl Room {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum ParticipantError {
+    #[error("Invalid Participant Status")]
+    InvalidState,
+}
+
 #[derive(Debug, Clone)]
 pub struct Participant {
     pub identity: UserIdentity,
-    pub history: Arc<Vec<Activity>>,
+    pub history: History,
 }
 
 impl Participant {
     pub fn new(identity: UserIdentity) -> Self {
         Participant {
             identity,
-            history: Arc::new(Vec::new()),
+            history: History {
+                audio: Arc::new(Vec::new()),
+                screen_sharing: Arc::new(Vec::new()),
+            },
         }
     }
 
     pub fn is_connected(&self) -> bool {
-        self.history.last().is_some_and(|a| a.is_ongoing())
+        self.history
+            .audio
+            .last()
+            .is_some_and(|a| a.interval.is_ongoing())
     }
 
-    pub fn connect(&mut self, now: Instant, flags: VoiceStateFlags) -> ActivityResult<()> {
+    pub fn connect(
+        &mut self,
+        now: Instant,
+        flags: VoiceStateFlags,
+    ) -> Result<(), ParticipantError> {
         if self.is_connected() {
-            return Err(ActivityError::AlreadyStarted);
+            return Err(ParticipantError::InvalidState);
         }
-        let activity = Activity::start_at(now, flags);
-        Arc::make_mut(&mut self.history).push(activity);
+        let interval = Interval::start_at(now);
+        let audio_activity = AudioActivity {
+            interval,
+            muted: flags.is_muted,
+            deafened: flags.is_deafened,
+        };
+        let activities = Arc::make_mut(&mut self.history.audio);
+        activities.push(audio_activity);
+
+        if flags.is_sharing_screen {
+            let interval = Interval::start_at(now);
+            let activities = Arc::make_mut(&mut self.history.screen_sharing);
+            activities.push(interval);
+        }
         Ok(())
     }
 
-    pub fn disconnect(&mut self, now: Instant) -> ActivityResult<()> {
-        let last = Arc::make_mut(&mut self.history)
+    pub fn disconnect(&mut self, now: Instant) -> Result<(), ParticipantError> {
+        let last_audio = Arc::make_mut(&mut self.history.audio)
             .last_mut()
-            .ok_or(ActivityError::NoActiveActivity)?;
-        last.end_at(now)?;
+            .ok_or(ParticipantError::InvalidState)?;
+        last_audio
+            .interval
+            .end_at(now)
+            .or(Err(ParticipantError::InvalidState))?;
+
+        let Some(last_screen_sharing) = Arc::make_mut(&mut self.history.screen_sharing).last_mut()
+        else {
+            return Ok(());
+        };
+        if last_screen_sharing.is_ongoing() {
+            last_screen_sharing
+                .end_at(now)
+                .or(Err(ParticipantError::InvalidState))?;
+        }
         Ok(())
     }
 
-    pub fn update(&mut self, now: Instant, flags: VoiceStateFlags) -> Result<(), ActivityError> {
+    pub fn update(&mut self, now: Instant, flags: VoiceStateFlags) -> Result<(), ParticipantError> {
+        self.update_audio(now, flags)?;
+        self.update_screen_sharing(now, flags)?;
+        Ok(())
+    }
+
+    fn update_audio(&mut self, now: Instant, flags: VoiceStateFlags) -> Result<(), ParticipantError> {
         if !self.is_connected() {
-            return Err(ActivityError::NoActiveActivity);
+            return Err(ParticipantError::InvalidState);
         }
 
-        let last = Arc::make_mut(&mut self.history)
+        let activities = Arc::make_mut(&mut self.history.audio);
+        let last_activity = activities
             .last_mut()
             .expect("is_connected() check failed; this should not happen");
-        if last.flags() == flags {
-            return Ok(());
+        if last_activity.is_same_state(flags) {
+            return Ok(())
         }
+        last_activity
+            .interval
+            .end_at(now)
+            .or(Err(ParticipantError::InvalidState))?;
+        let activity = AudioActivity {
+            interval: Interval::start_at(now),
+            muted: flags.is_muted,
+            deafened: flags.is_deafened,
+        };
+        activities.push(activity);
+        Ok(())
+    }
 
-        last.end_at(now)?;
-        let activity = Activity::start_at(now, flags);
-        Arc::make_mut(&mut self.history).push(activity);
+    fn update_screen_sharing(&mut self, now: Instant, flags: VoiceStateFlags) -> Result<(), ParticipantError> {
+        let activities = Arc::make_mut(&mut self.history.screen_sharing);
+        let Some(last_activity) = activities.last_mut() else {
+            if flags.is_sharing_screen {
+                activities.push(Interval::start_at(now));
+            }
+            return Ok(());
+        };
+
+        match (last_activity.is_ongoing(), flags.is_sharing_screen) {
+            (false, true) => {
+                activities.push(Interval::start_at(now));
+            }
+            (true, false) => {
+                last_activity
+                    .end_at(now)
+                    .or(Err(ParticipantError::InvalidState))?;
+            }
+            (_, _) => {}
+        }
         Ok(())
     }
 
@@ -192,39 +269,47 @@ impl Participant {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum ActivityError {
-    #[error("Activity has already started")]
-    AlreadyStarted,
+#[derive(Debug, Clone)]
+pub struct History {
+    pub audio: Arc<Vec<AudioActivity>>,
+    pub screen_sharing: Arc<Vec<Interval>>,
+}
 
-    #[error("Activity has already ended")]
+#[derive(Debug)]
+pub enum IntervalError {
     AlreadyEnded,
-
-    #[error("No activity found")]
     NoActiveActivity,
 }
 
-pub type ActivityResult<T> = Result<T, ActivityError>;
+pub type IntervalResult<T> = Result<T, IntervalError>;
 
 #[derive(Debug, Clone)]
-pub struct Activity {
-    start: Instant,
-    end: Option<Instant>,
-    flags: VoiceStateFlags,
+pub struct AudioActivity {
+    pub interval: Interval,
+    pub muted: bool,
+    pub deafened: bool,
 }
 
-impl Activity {
-    pub fn start_at(start: Instant, flags: VoiceStateFlags) -> Self {
-        Activity {
-            start,
-            end: None,
-            flags,
-        }
+impl AudioActivity {
+    fn is_same_state(&self, flags: VoiceStateFlags) -> bool {
+        self.muted == flags.is_muted && self.deafened == flags.is_deafened
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Interval {
+    pub start: Instant,
+    pub end: Option<Instant>,
+}
+
+impl Interval {
+    pub fn start_at(start: Instant) -> Self {
+        Interval { start, end: None }
     }
 
-    pub fn end_at(&mut self, now: Instant) -> ActivityResult<()> {
+    pub fn end_at(&mut self, now: Instant) -> IntervalResult<()> {
         match self.end {
-            Some(_) => Err(ActivityError::AlreadyEnded),
+            Some(_) => Err(IntervalError::AlreadyEnded),
             None => {
                 self.end = Some(now);
                 Ok(())
@@ -240,24 +325,12 @@ impl Activity {
         self.end.is_none()
     }
 
-    pub fn is_following(&self, prev: &Activity) -> bool {
+    pub fn is_following(&self, prev: &Interval) -> bool {
         prev.end == Some(self.start)
     }
 
     pub fn overlaps(&self, range_start: Instant, range_end: Instant) -> bool {
         self.start <= range_end && self.end.is_none_or(|end| range_start <= end)
-    }
-
-    pub fn start(&self) -> Instant {
-        self.start
-    }
-
-    pub fn end(&self) -> Option<Instant> {
-        self.end
-    }
-
-    pub fn flags(&self) -> VoiceStateFlags {
-        self.flags
     }
 
     pub fn calculate_duration(&self, now: Instant) -> Duration {

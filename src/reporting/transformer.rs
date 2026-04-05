@@ -4,7 +4,7 @@ use crate::graphics::{
 };
 use crate::infrastructure::MemberVisual;
 use crate::reporting::RoomSnapshot;
-use crate::room::Activity;
+use crate::room::{AudioActivity, Interval};
 use chrono::Local;
 use serenity::all::UserId;
 use std::cmp::max;
@@ -22,21 +22,43 @@ pub fn transform(
     let entries = room
         .participants
         .iter()
-        .filter(|p| p.history.iter().any(|activity| activity.overlaps(from, to)))
+        .filter(|p| {
+            p.history
+                .audio
+                .iter()
+                .any(|activity| activity.interval.overlaps(from, to))
+        })
         .map(|p| {
             let visual = visuals
                 .get(&p.identity.user_id)
                 .expect("visual must be pre-fetched before rendering.");
 
-            let filtered_history = p
+            let filtered_audio_activities = p
                 .history
+                .audio
+                .iter()
+                .filter(|activity| activity.interval.overlaps(from, to));
+
+            let filtered_screen_sharing_activities = p
+                .history
+                .screen_sharing
                 .iter()
                 .filter(|activity| activity.overlaps(from, to));
 
             TimelineEntry {
                 avatar: visual.avatar.clone(),
-                voice_sections: convert_to_voice_sections(from, now, to, filtered_history.clone()),
-                streaming_sections: convert_to_streaming_sections(from, now, to, filtered_history),
+                voice_sections: convert_to_voice_sections(
+                    from,
+                    now,
+                    to,
+                    filtered_audio_activities.clone(),
+                ),
+                streaming_sections: convert_to_streaming_sections(
+                    from,
+                    now,
+                    to,
+                    filtered_screen_sharing_activities,
+                ),
                 active_color: visual.active_color,
                 streaming_color: visual.streaming_color,
                 inactive_color: visual.inactive_color,
@@ -92,17 +114,18 @@ fn convert_to_voice_sections<'a>(
     start: Instant,
     now: Instant,
     end: Instant,
-    history: impl IntoIterator<Item = &'a Activity>,
+    history: impl IntoIterator<Item = &'a AudioActivity>,
 ) -> Vec<VoiceSection> {
     let duration_sec = (end - start).as_secs_f32();
 
     history
         .into_iter()
         .filter_map(|activity| {
-            let fill_style = FillStyle::from_flags(activity.flags());
+            let fill_style = FillStyle::from_flags(activity.muted, activity.deafened);
 
-            let start_ratio = (activity.start() - start).as_secs_f32() / duration_sec;
-            let end_ratio = (activity.end().unwrap_or(now) - start).as_secs_f32() / duration_sec;
+            let start_ratio = (activity.interval.start - start).as_secs_f32() / duration_sec;
+            let end_ratio =
+                (activity.interval.end.unwrap_or(now) - start).as_secs_f32() / duration_sec;
 
             Some(VoiceSection {
                 span: RatioSpan::clamped(start_ratio, end_ratio)?,
@@ -116,64 +139,19 @@ fn convert_to_streaming_sections<'a>(
     start: Instant,
     now: Instant,
     end: Instant,
-    history: impl IntoIterator<Item = &'a Activity>,
+    activities: impl IntoIterator<Item = &'a Interval>,
 ) -> Vec<StreamingSection> {
     let duration_sec = (end - start).as_secs_f32();
-    let mut streaming_sections = Vec::new();
 
-    // Always keep streaming start activity.
-    let mut streaming_start_activity: Option<&Activity> = None;
+    activities
+        .into_iter()
+        .filter_map(|activity| {
+            let start_ratio = (activity.start - start).as_secs_f32() / duration_sec;
+            let end_ratio = (activity.end.unwrap_or(now) - start).as_secs_f32() / duration_sec;
 
-    let history: Vec<&Activity> = history.into_iter().collect();
-
-    for i in 0..history.len() {
-        let current_activity = &history[i];
-
-        // update current streaming start
-        match streaming_start_activity {
-            Some(streaming_start) => {
-                if !current_activity.flags().is_sharing_screen {
-                    let start_ratio =
-                        (streaming_start.start() - start).as_secs_f32() / duration_sec;
-                    let end_ratio = (current_activity.start() - start).as_secs_f32() / duration_sec;
-
-                    let Some(span) = RatioSpan::clamped(start_ratio, end_ratio) else {
-                        continue;
-                    };
-
-                    streaming_sections.push(StreamingSection { span });
-                    streaming_start_activity = None;
-                }
-            }
-            None => {
-                if current_activity.flags().is_sharing_screen {
-                    streaming_start_activity = Some(history[i]);
-                }
-            }
-        }
-
-        // detect disconnection from voice channel
-        if let Some(streaming_start) = &streaming_start_activity {
-            let terminated = if i == history.len() - 1 {
-                true
-            } else {
-                !history[i + 1].is_following(current_activity)
-            };
-
-            if terminated {
-                let start_ratio = (streaming_start.start() - start).as_secs_f32() / duration_sec;
-                let end_ratio =
-                    (current_activity.end().unwrap_or(now) - start).as_secs_f32() / duration_sec;
-
-                streaming_start_activity = None;
-
-                let Some(span) = RatioSpan::clamped(start_ratio, end_ratio) else {
-                    continue;
-                };
-                streaming_sections.push(StreamingSection { span });
-            }
-        }
-    }
-
-    streaming_sections
+            Some(StreamingSection {
+                span: RatioSpan::clamped(start_ratio, end_ratio)?,
+            })
+        })
+        .collect()
 }

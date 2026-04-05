@@ -1,4 +1,4 @@
-use crate::room::model::Activity;
+use crate::room::model::History;
 use chrono::TimeDelta;
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
 use std::fmt::Display;
@@ -48,7 +48,7 @@ pub struct RoomLease {
 #[derive(Clone)]
 pub struct ParticipantLease {
     pub identity: UserIdentity,
-    pub history: Arc<Vec<Activity>>,
+    pub history: History,
 }
 
 #[derive(Debug, Clone, Copy)]

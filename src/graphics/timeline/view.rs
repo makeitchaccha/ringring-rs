@@ -1,4 +1,3 @@
-use crate::room::VoiceStateFlags;
 use chrono::{Datelike, DurationRound, NaiveDateTime, TimeDelta, Timelike};
 use std::fmt::Debug;
 use std::time::Duration;
@@ -151,8 +150,8 @@ pub enum FillStyle {
 }
 
 impl FillStyle {
-    pub fn from_flags(flags: VoiceStateFlags) -> FillStyle {
-        match (flags.is_deafened, flags.is_muted) {
+    pub fn from_flags(muted: bool, deafened: bool) -> FillStyle {
+        match (deafened, muted) {
             (true, _) => FillStyle::Deafened,
             (_, true) => FillStyle::Muted,
             (_, _) => FillStyle::Active,
