@@ -1,0 +1,17 @@
+# build
+target/
+
+# vcs
+.git/
+.github/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+Dockerfile*
+docker-compose.yml

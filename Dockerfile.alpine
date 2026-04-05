@@ -1,0 +1,40 @@
+FROM rust:1.94-alpine AS planner
+LABEL authors="yuyaprgrm"
+WORKDIR /app
+RUN cargo install cargo-chef
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM rust:1.94-alpine AS builder
+WORKDIR /app
+RUN cargo install cargo-chef
+COPY --from=planner /app/recipe.json recipe.json
+
+# install deps to build cosmic-text
+RUN apk update && apk add --no-cache \
+    build-base \
+    pkgconfig \
+    fontconfig-dev \
+    freetype-dev \
+    jemalloc-dev
+
+RUN cargo chef cook --release --recipe-path recipe.json
+
+COPY . .
+RUN cargo build --release --bin ringring-rs
+
+FROM alpine:3.21 AS runtime
+WORKDIR /app
+
+# install deps to run with cosmic-text
+RUN apk update && apk add --no-cache \
+    fontconfig \
+    freetype \
+    font-dejavu \
+    ca-certificates
+
+COPY --from=builder /app/target/release/ringring-rs /app/ringring-rs
+RUN adduser -D -u 1000 nonroot
+USER nonroot:nonroot
+
+ENTRYPOINT ["/app/ringring-rs"]
