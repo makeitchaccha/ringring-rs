@@ -10,15 +10,22 @@ on:
       - main
     tags:
       - "v*"
+  pull_request:
+    types: [labeled]
   pull_request_review:
     types: [submitted]
+  workflow_dispatch:
 
 env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   build:
-    if: github.event_name == 'push' || github.event.review.state == 'approved'
+    if: |
+      github.event_name == 'push' || 
+      github.event_name == 'workflow_dispatch' ||
+      github.event.review.state == 'approved' || 
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-ci'))
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
