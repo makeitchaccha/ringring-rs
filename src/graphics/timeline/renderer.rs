@@ -323,10 +323,10 @@ impl Renderer {
             );
         }
 
-        if !labels.is_empty() {
-            if let Err(err) = calligraphy.draw_text(pixmap, &labels) {
-                warn!(error = %err, "failed to draw text");
-            }
+        if !labels.is_empty()
+            && let Err(err) = calligraphy.draw_text(pixmap, &labels)
+        {
+            warn!(error = %err, "failed to draw text");
         }
     }
 }

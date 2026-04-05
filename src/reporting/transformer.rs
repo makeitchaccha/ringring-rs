@@ -1,4 +1,3 @@
-use std::cmp::max;
 use crate::graphics::timeline::view::{AxisConfig, RatioSpan};
 use crate::graphics::{
     FillStyle, MajorTickConfig, StreamingSection, Timeline, TimelineEntry, VoiceSection,
@@ -6,10 +5,11 @@ use crate::graphics::{
 use crate::infrastructure::MemberVisual;
 use crate::reporting::RoomSnapshot;
 use crate::room::Activity;
+use chrono::Local;
 use serenity::all::UserId;
+use std::cmp::max;
 use std::collections::HashMap;
 use std::time::Duration;
-use chrono::Local;
 use tokio::time::Instant;
 
 pub fn transform(
@@ -80,11 +80,8 @@ fn choose_suitable_axis(duration: Duration) -> AxisConfig {
     for (interval_sec, divisions) in AXIS_CONFIG_PRESET {
         if duration_secs / interval_sec > 1 {
             let interval = Duration::from_secs(interval_sec);
-            return AxisConfig::with_minor(
-                MajorTickConfig::without_sec(interval),
-                divisions,
-            )
-            .unwrap();
+            return AxisConfig::with_minor(MajorTickConfig::without_sec(interval), divisions)
+                .unwrap();
         }
     }
 
