@@ -1,6 +1,4 @@
-use crate::room::{
-    AudioActivity, Interval, Moment, ParticipantLease, RoomLease, UserIdentity,
-};
+use crate::room::{AudioActivity, Interval, Moment, ParticipantLease, RoomLease, UserIdentity};
 use serenity::all::{
     ChannelId, CreateAttachment, CreateComponent, CreateMessage, EditAttachments, EditMessage,
     GuildId, Http, MessageFlags, MessageId,

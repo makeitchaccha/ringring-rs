@@ -213,7 +213,11 @@ impl Participant {
         Ok(())
     }
 
-    fn update_audio(&mut self, now: Instant, flags: VoiceStateFlags) -> Result<(), ParticipantError> {
+    fn update_audio(
+        &mut self,
+        now: Instant,
+        flags: VoiceStateFlags,
+    ) -> Result<(), ParticipantError> {
         if !self.is_connected() {
             return Err(ParticipantError::InvalidState);
         }
@@ -223,7 +227,7 @@ impl Participant {
             .last_mut()
             .expect("is_connected() check failed; this should not happen");
         if last_activity.is_same_state(flags) {
-            return Ok(())
+            return Ok(());
         }
         last_activity
             .interval
@@ -238,7 +242,11 @@ impl Participant {
         Ok(())
     }
 
-    fn update_screen_sharing(&mut self, now: Instant, flags: VoiceStateFlags) -> Result<(), ParticipantError> {
+    fn update_screen_sharing(
+        &mut self,
+        now: Instant,
+        flags: VoiceStateFlags,
+    ) -> Result<(), ParticipantError> {
         let activities = Arc::make_mut(&mut self.history.screen_sharing);
         let Some(last_activity) = activities.last_mut() else {
             if flags.is_sharing_screen {
