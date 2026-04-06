@@ -12,6 +12,11 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
+/// A smart proxy for communicating with a [`Session`].
+///
+/// Beyond simple message passing, `SessionHandle` can "suspend" delivery,
+/// buffering incoming messages in memory. This is crucial during the shutdown
+/// sequence to prevent race conditions.
 pub struct SessionHandle {
     suspended_events: Option<Vec<SessionMessage>>,
     tx: mpsc::UnboundedSender<SessionMessage>,
@@ -25,7 +30,11 @@ impl SessionHandle {
         }
     }
 
-    pub fn dispatch_or_hold(
+    /// Dispatches a message to the session.
+    ///
+    /// If message delivery is currently suspended, the message will be queued in memory.
+    /// Otherwise, it is sent immediately to the session task.
+    pub fn dispatch(
         &mut self,
         event: SessionMessage,
     ) -> Result<(), SendError<SessionMessage>> {
@@ -36,17 +45,23 @@ impl SessionHandle {
         Ok(())
     }
 
-    pub fn bypass(&self, event: SessionMessage) -> Result<(), SendError<SessionMessage>> {
+    /// Forces immediate delivery of a message, bypassing any suspension buffers.
+    ///
+    /// This should be used for critical control signals (like shutdown requests) 
+    /// that must be processed even when the session's normal event flow is suspended.
+    pub fn force_dispatch(&self, event: SessionMessage) -> Result<(), SendError<SessionMessage>> {
         self.tx.send(event)?;
         Ok(())
     }
 
+    /// Suspends message delivery and starts buffering all subsequent messages.
     pub fn suspend_delivery(&mut self) {
         if self.suspended_events.is_none() {
             self.suspended_events = Some(Vec::new());
         }
     }
 
+    /// Resumes message delivery and flushes all buffered messages to the session.
     pub fn resume_delivery(&mut self) -> Result<(), SendError<SessionMessage>> {
         if let Some(queue) = self.suspended_events.take() {
             for event in queue {
@@ -56,54 +71,79 @@ impl SessionHandle {
         Ok(())
     }
 
+    /// Reconnects the handle to a new session instance.
+    ///
+    /// Used when a session has shut down but new events were buffered, requiring
+    /// a fresh session to process them.
     pub fn reconnect(&mut self, new_tx: mpsc::UnboundedSender<SessionMessage>) {
         self.tx = new_tx;
     }
 
+    /// Returns true if message delivery is currently suspended.
     pub fn is_suspended(&self) -> bool {
         self.suspended_events.is_some()
     }
 
-    pub fn has_suspended_events(&self) -> bool {
+    /// Returns true if there are any events currently waiting in the buffer.
+    ///
+    /// This is typically checked after a session shutdown to see if any new events 
+    /// arrived during the shutdown process, requiring a fresh session to be spawned.
+    pub fn has_waiting_events(&self) -> bool {
         self.suspended_events
             .as_ref()
             .is_some_and(|events| !events.is_empty())
     }
+
 }
 
+/// Reasons why a session might be requested to shut down.
 #[derive(Debug, PartialEq)]
 pub enum ShutdownReason {
+    /// The channel has been empty for a certain duration.
     Idle,
+    /// An external command or system event requested shutdown.
     External,
 }
 
+/// Messages sent from the coordinator to a session.
 pub enum SessionMessage {
+    /// A user has joined the voice channel.
     Connect {
         now: Instant,
         identity: UserIdentity,
         flags: VoiceStateFlags,
     },
+    /// A user has left the voice channel.
     Disconnect {
         now: Instant,
         user_id: UserId,
     },
+    /// A user's voice state (mute/deaf/screen) has changed.
     Update {
         now: Instant,
         user_id: UserId,
         flags: VoiceStateFlags,
     },
+    /// Request the session to shut down gracefully.
     RequestShutdown {
         reason: ShutdownReason,
         end: Moment,
     },
 }
 
+/// Events emitted by a session to its subscribers (e.g., for reporting).
 #[derive(Clone)]
 pub enum SessionEvent {
+    /// The session's internal state (room model) has been updated.
     Updated { room: RoomLease },
+    /// The session has finished and is now closed.
     Shutdown { room: RoomLease, end: Moment },
 }
 
+/// An actor-like task that manages the state of a single voice channel activity.
+///
+/// `Session` tracks who is in the room, their voice states, and records the
+/// history of these activities. It also manages its own idle timeout.
 pub struct Session {
     room: Room,
     rx: mpsc::UnboundedReceiver<SessionMessage>,
