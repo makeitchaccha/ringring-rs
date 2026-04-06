@@ -11,11 +11,16 @@ use std::sync::Arc;
 use thiserror::Error;
 use tiny_skia::{Color, Pixmap};
 
+/// Visual assets and color palette derived from a member's avatar.
 #[derive(Clone)]
 pub struct MemberVisual {
+    /// The processed and resized avatar image.
     pub avatar: Pixmap,
+    /// The dominant color of the avatar, used for active participation states.
     pub active_color: Color,
+    /// A desaturated/faded version of the active color for muted/inactive states.
     pub inactive_color: Color,
+    /// A distinct color derived from the avatar for streaming/screen sharing states.
     pub streaming_color: Color,
 }
 
@@ -37,6 +42,10 @@ pub enum AssetError {
     Join(#[from] tokio::task::JoinError),
 }
 
+/// A provider for fetching and processing member avatars into visual palettes.
+///
+/// It uses an asynchronous cache to avoid redundant network requests and expensive 
+/// image processing (k-means clustering).
 #[derive(Clone)]
 pub struct AssetProvider {
     client: reqwest::Client,
@@ -53,6 +62,15 @@ impl AssetProvider {
         }
     }
 
+    /// Fetches a member's avatar and extracts a personalized color palette.
+    ///
+    /// The color extraction process involves:
+    /// 1. Resizing the avatar to a small uniform size.
+    /// 2. Converting pixels to **Lab color space** for perceptually accurate analysis.
+    /// 3. Filtering out extreme lightness/darkness to ensure readable colors.
+    /// 4. Running **k-means clustering** (multiple runs to find the best fit) 
+    ///    to identify the most representative color.
+    /// 5. Deriving secondary colors (inactive/streaming) using color space transformations.
     pub async fn get_members_visual(
         &self,
         guild_id: GuildId,
