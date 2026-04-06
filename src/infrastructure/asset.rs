@@ -44,7 +44,7 @@ pub enum AssetError {
 
 /// A provider for fetching and processing member avatars into visual palettes.
 ///
-/// It uses an asynchronous cache to avoid redundant network requests and expensive 
+/// It uses an asynchronous cache to avoid redundant network requests and expensive
 /// image processing (k-means clustering).
 #[derive(Clone)]
 pub struct AssetProvider {
@@ -68,7 +68,7 @@ impl AssetProvider {
     /// 1. Resizing the avatar to a small uniform size.
     /// 2. Converting pixels to **Lab color space** for perceptually accurate analysis.
     /// 3. Filtering out extreme lightness/darkness to ensure readable colors.
-    /// 4. Running **k-means clustering** (multiple runs to find the best fit) 
+    /// 4. Running **k-means clustering** (multiple runs to find the best fit)
     ///    to identify the most representative color.
     /// 5. Deriving secondary colors (inactive/streaming) using color space transformations.
     pub async fn get_members_visual(

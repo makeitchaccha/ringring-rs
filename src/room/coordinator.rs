@@ -81,14 +81,9 @@ pub enum CoordinatorInternalMessage {
         since: Moment,
     },
     /// Sent by a session to confirm it has successfully shut down.
-    AcceptShutdown {
-        channel_id: ChannelId,
-        room: Room,
-    },
+    AcceptShutdown { channel_id: ChannelId, room: Room },
     /// Sent by a session to reject a shutdown request (e.g., because someone re-joined).
-    RejectShutdown {
-        channel_id: ChannelId,
-    },
+    RejectShutdown { channel_id: ChannelId },
 }
 
 /// The central orchestrator for all voice channel sessions.

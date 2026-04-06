@@ -92,7 +92,11 @@ impl Room {
     }
 
     /// Handles a user disconnecting from the voice channel.
-    pub fn handle_disconnect(&mut self, now: Instant, user_id: UserId) -> Result<RoomStatus, RoomError>  {
+    pub fn handle_disconnect(
+        &mut self,
+        now: Instant,
+        user_id: UserId,
+    ) -> Result<RoomStatus, RoomError> {
         debug!("handle disconnect");
         let participant = self
             .find_participant_mut(user_id)
@@ -112,7 +116,7 @@ impl Room {
         now: Instant,
         user_id: UserId,
         flags: VoiceStateFlags,
-    ) -> Result<(), RoomError>  {
+    ) -> Result<(), RoomError> {
         debug!("handle update");
         let participant = self
             .find_participant_mut(user_id)
@@ -195,7 +199,7 @@ impl Participant {
             muted: flags.is_muted,
             deafened: flags.is_deafened,
         };
-        
+
         // Use Arc::make_mut to implement Copy-on-Write for the history.
         // This ensures that we only clone the vector if it's being shared
         // (e.g., during a reporting snapshot).

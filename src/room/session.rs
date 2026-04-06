@@ -34,10 +34,7 @@ impl SessionHandle {
     ///
     /// If message delivery is currently suspended, the message will be queued in memory.
     /// Otherwise, it is sent immediately to the session task.
-    pub fn dispatch(
-        &mut self,
-        event: SessionMessage,
-    ) -> Result<(), SendError<SessionMessage>> {
+    pub fn dispatch(&mut self, event: SessionMessage) -> Result<(), SendError<SessionMessage>> {
         match self.suspended_events.as_mut() {
             Some(queue) => queue.push(event),
             None => self.tx.send(event)?,
@@ -47,7 +44,7 @@ impl SessionHandle {
 
     /// Forces immediate delivery of a message, bypassing any suspension buffers.
     ///
-    /// This should be used for critical control signals (like shutdown requests) 
+    /// This should be used for critical control signals (like shutdown requests)
     /// that must be processed even when the session's normal event flow is suspended.
     pub fn force_dispatch(&self, event: SessionMessage) -> Result<(), SendError<SessionMessage>> {
         self.tx.send(event)?;
@@ -86,14 +83,13 @@ impl SessionHandle {
 
     /// Returns true if there are any events currently waiting in the buffer.
     ///
-    /// This is typically checked after a session shutdown to see if any new events 
+    /// This is typically checked after a session shutdown to see if any new events
     /// arrived during the shutdown process, requiring a fresh session to be spawned.
     pub fn has_waiting_events(&self) -> bool {
         self.suspended_events
             .as_ref()
             .is_some_and(|events| !events.is_empty())
     }
-
 }
 
 /// Reasons why a session might be requested to shut down.
@@ -114,10 +110,7 @@ pub enum SessionMessage {
         flags: VoiceStateFlags,
     },
     /// A user has left the voice channel.
-    Disconnect {
-        now: Instant,
-        user_id: UserId,
-    },
+    Disconnect { now: Instant, user_id: UserId },
     /// A user's voice state (mute/deaf/screen) has changed.
     Update {
         now: Instant,
@@ -125,10 +118,7 @@ pub enum SessionMessage {
         flags: VoiceStateFlags,
     },
     /// Request the session to shut down gracefully.
-    RequestShutdown {
-        reason: ShutdownReason,
-        end: Moment,
-    },
+    RequestShutdown { reason: ShutdownReason, end: Moment },
 }
 
 /// Events emitted by a session to its subscribers (e.g., for reporting).
