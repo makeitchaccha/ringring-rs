@@ -41,23 +41,25 @@ impl Publisher {
                     channel_id,
                     session_event_rx,
                 } => {
-                    let Some(subscription) =
-                        self.subscription_provider.find_subscription(channel_id)
-                    else {
+                    let subscriptions = self.subscription_provider.find_subscriptions(channel_id);
+
+                    if subscriptions.is_empty() {
                         warn!(
                             "Session pushed event but no valid subscription was found for channel: {}",
                             channel_id
                         );
                         continue;
-                    };
+                    }
 
-                    Reporter::spawn(
-                        self.http.clone(),
-                        self.asset_provider.clone(),
-                        Renderer::new(subscription.layout_config, self.calligraphy.clone()),
-                        session_event_rx,
-                        ReportAnchor::new(subscription.report_channel),
-                    );
+                    for subscription in subscriptions {
+                        Reporter::spawn(
+                            self.http.clone(),
+                            self.asset_provider.clone(),
+                            Renderer::new(subscription.layout_config, self.calligraphy.clone()),
+                            session_event_rx.resubscribe(),
+                            ReportAnchor::new(subscription.report_channel),
+                        );
+                    }
                 }
             }
         }

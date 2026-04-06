@@ -1,18 +1,23 @@
+mod cli;
+mod config;
+
 #[cfg(feature = "jemalloc")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+use crate::config::load_config;
+use clap::Parser;
 use ringring_rs::graphics::timeline::layout::LayoutConfig;
 use ringring_rs::infrastructure::AssetProvider;
 use ringring_rs::presentation::VoiceHandler;
 use ringring_rs::reporting::{Publisher, StaticSubscriptionProvider, Subscription};
 use ringring_rs::room::Coordinator;
-use serenity::all::{ChannelId, GatewayIntents};
+use serenity::all::GatewayIntents;
 use serenity::prelude::*;
 use std::collections::HashMap;
-use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
+use thiserror::__private18::AsDynError;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -23,34 +28,42 @@ async fn main() {
     tracing_subscriber::fmt::init();
     info!("Starting ringring-rs");
 
-    // 1. Load configuration from environment
-    let token = Token::from_env("DISCORD_TOKEN").expect("Expected a token in the environment");
+    let cli = cli::Cli::parse();
 
-    let subscriptions = env::var("REPORT_CHANNELS")
-        .ok()
-        .map(|channels_json| {
-            let pairs: Vec<(String, String)> = serde_json::from_str(&channels_json)
-                .expect("REPORT_CHANNELS must be a valid JSON array of pairs");
+    let config = match load_config(cli.config.as_path()) {
+        Ok(config) => config,
+        Err(error) => {
+            error!(error = %error.as_dyn_error(), "Failed to load config");
+            return;
+        }
+    };
 
-            pairs
-                .into_iter()
-                .map(|(voice_id, report_id)| {
-                    let voice_channel =
-                        ChannelId::from_str(&voice_id).expect("Invalid voice channel ID");
-                    let report_channel =
-                        ChannelId::from_str(&report_id).expect("Invalid report channel ID");
+    let token = match Token::from_str(config.discord_token.as_str()) {
+        Ok(token) => token,
+        Err(error) => {
+            error!(error = %error.as_dyn_error(), "failed to parse token");
+            return;
+        }
+    };
 
-                    (
-                        voice_channel,
-                        Subscription {
-                            report_channel,
-                            layout_config: LayoutConfig::default(),
-                        },
-                    )
-                })
-                .collect::<HashMap<_, _>>()
+    let subscriptions = config
+        .subscriptions
+        .iter()
+        .map(|entry| {
+            (
+                entry.voice_channel,
+                Subscription {
+                    report_channel: entry.report_channel,
+                    layout_config: LayoutConfig::default(),
+                },
+            )
         })
-        .unwrap_or_default();
+        .fold(HashMap::new(), |mut map, (voice_channel, subscription)| {
+            map.entry(voice_channel)
+                .or_insert(Vec::new())
+                .push(subscription);
+            map
+        });
 
     let subscription_provider = Arc::new(StaticSubscriptionProvider::new(subscriptions));
 

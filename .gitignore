@@ -1,1 +1,12 @@
-/target
+# build
+target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Config
+config.toml
+docker-compose.yml

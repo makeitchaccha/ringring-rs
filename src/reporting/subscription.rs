@@ -10,24 +10,27 @@ pub struct Subscription {
 
 pub trait SubscriptionProvider: Send + Sync {
     fn has_subscription(&self, channel: ChannelId) -> bool {
-        self.find_subscription(channel).is_some()
+        !self.find_subscriptions(channel).is_empty()
     }
 
-    fn find_subscription(&self, voice_channel: ChannelId) -> Option<Subscription>;
+    fn find_subscriptions(&self, voice_channel: ChannelId) -> Vec<Subscription>;
 }
 
 pub struct StaticSubscriptionProvider {
-    subscriptions: HashMap<ChannelId, Subscription>,
+    subscriptions: HashMap<ChannelId, Vec<Subscription>>,
 }
 
 impl StaticSubscriptionProvider {
-    pub fn new(subscriptions: HashMap<ChannelId, Subscription>) -> Self {
+    pub fn new(subscriptions: HashMap<ChannelId, Vec<Subscription>>) -> Self {
         Self { subscriptions }
     }
 }
 
 impl SubscriptionProvider for StaticSubscriptionProvider {
-    fn find_subscription(&self, voice_channel: ChannelId) -> Option<Subscription> {
-        self.subscriptions.get(&voice_channel).cloned()
+    fn find_subscriptions(&self, voice_channel: ChannelId) -> Vec<Subscription> {
+        self.subscriptions
+            .get(&voice_channel)
+            .cloned()
+            .unwrap_or(Vec::new())
     }
 }
