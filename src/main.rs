@@ -15,7 +15,6 @@ use ringring_rs::room::Coordinator;
 use serenity::all::GatewayIntents;
 use serenity::prelude::*;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 use thiserror::__private18::AsDynError;
 use tracing::{error, info};
@@ -34,14 +33,6 @@ async fn main() {
         Ok(config) => config,
         Err(error) => {
             error!(error = %error.as_dyn_error(), "Failed to load config");
-            return;
-        }
-    };
-
-    let token = match Token::from_str(config.discord_token.as_str()) {
-        Ok(token) => token,
-        Err(error) => {
-            error!(error = %error.as_dyn_error(), "failed to parse token");
             return;
         }
     };
@@ -77,7 +68,7 @@ async fn main() {
     let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;
 
     // 5. Build Serenity Client
-    let mut client = Client::builder(token, intents)
+    let mut client = Client::builder(config.discord.token, intents)
         .event_handler(Arc::new(VoiceHandler::new(
             subscription_provider.clone(),
             coordinator_handle,

@@ -2,6 +2,7 @@ use anyhow::Context;
 use config::{Config, Environment, File};
 use serde::Deserialize;
 use serenity::all::ChannelId;
+use serenity::prelude::Token;
 use std::path::Path;
 
 pub fn load_config(path: &Path) -> anyhow::Result<AppConfig> {
@@ -20,8 +21,13 @@ pub fn load_config(path: &Path) -> anyhow::Result<AppConfig> {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
-    pub discord_token: String,
+    pub discord: DiscordConfig,
     pub subscriptions: Vec<SubscriptionEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DiscordConfig {
+    pub token: Token,
 }
 
 #[derive(Debug, Clone, Deserialize)]
