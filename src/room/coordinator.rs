@@ -9,6 +9,10 @@ use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
 
+/// A handle to communicate with the [`Coordinator`].
+///
+/// This handle allows tracking and notifying voice channel activities from other parts of the system,
+/// such as the Discord event handler.
 pub struct CoordinatorHandle {
     tx: mpsc::UnboundedSender<CoordinatorMessage>,
 }
@@ -18,6 +22,9 @@ impl CoordinatorHandle {
         Self { tx }
     }
 
+    /// Tracks an activity in a specific voice channel.
+    ///
+    /// If a session for the channel does not exist, the coordinator will spawn a new one.
     pub fn track(
         &self,
         channel_id: ChannelId,
@@ -31,6 +38,7 @@ impl CoordinatorHandle {
         })
     }
 
+    /// Notifies a session of an event without creating a new session if it doesn't exist.
     pub fn notify(
         &self,
         channel_id: ChannelId,
@@ -44,6 +52,7 @@ impl CoordinatorHandle {
 }
 
 pub enum CoordinatorEvent {
+    /// Emitted when a new session is published and ready to be consumed (e.g., by a reporter).
     Published {
         channel_id: ChannelId,
         session_event_rx: broadcast::Receiver<SessionEvent>,
@@ -51,31 +60,51 @@ pub enum CoordinatorEvent {
 }
 
 pub enum CoordinatorMessage {
+    /// Dispatch a message to a session, creating it if necessary.
     Track {
         channel_id: ChannelId,
         guild_id: GuildId,
         message: SessionMessage,
     },
+    /// Dispatch a message to an existing session.
     Notify {
         channel_id: ChannelId,
         message: SessionMessage,
     },
 }
 
+/// Internal messages used by [`Session`](crate::room::Session) to communicate its lifecycle state back to the coordinator.
 pub enum CoordinatorInternalMessage {
+    /// Sent when a session has been empty for the timeout period.
     Idle {
         channel_id: ChannelId,
         since: Moment,
     },
-    AcceptShutdown {
-        channel_id: ChannelId,
-        room: Room,
-    },
-    RejectShutdown {
-        channel_id: ChannelId,
-    },
+    /// Sent by a session to confirm it has successfully shut down.
+    AcceptShutdown { channel_id: ChannelId, room: Room },
+    /// Sent by a session to reject a shutdown request (e.g., because someone re-joined).
+    RejectShutdown { channel_id: ChannelId },
 }
 
+/// The central orchestrator for all voice channel sessions.
+///
+/// The `Coordinator` manages the lifecycle of [`Session`](crate::room::Session) instances,
+/// maintaining one active session per voice channel. It acts as a router for incoming
+/// Discord voice state events and ensures that sessions are properly created and disposed of.
+///
+/// ### Graceful Shutdown & Race Conditions
+/// A key responsibility of the `Coordinator` is managing the "Idle -> Shutdown" transition.
+/// To handle the race condition where a user joins a channel exactly when the session is
+/// shutting down, the coordinator uses a suspension mechanism:
+///
+/// 1. When a session reports being [`Idle`](CoordinatorInternalMessage::Idle), the coordinator
+///    instructs the [`SessionHandle`] to buffer any new incoming events.
+/// 2. It then sends a shutdown request to the session.
+/// 3. If the session confirms shutdown ([`AcceptShutdown`](CoordinatorInternalMessage::AcceptShutdown)),
+///    the coordinator checks if any events were buffered during the wait.
+/// 4. If events exist, it immediately spawns a *new* session and flushes the buffered events to it.
+/// 5. If the session rejects shutdown ([`RejectShutdown`](CoordinatorInternalMessage::RejectShutdown)),
+///    the coordinator simply resumes delivery of buffered events to the existing session.
 pub struct Coordinator {
     sessions: HashMap<ChannelId, SessionHandle>,
     rx: mpsc::UnboundedReceiver<CoordinatorMessage>,
@@ -152,8 +181,12 @@ impl Coordinator {
                             }
 
                             info!("Started shutdown sequence for session:{}", channel_id);
+
+                            // 1. Suspend normal event delivery to prevent race conditions during shutdown.
                             handle.suspend_delivery();
-                            if let Err(err) = handle.bypass(SessionMessage::RequestShutdown {
+
+                            // 2. Force-dispatch a shutdown request. This bypasses the buffer we just started.
+                            if let Err(err) = handle.force_dispatch(SessionMessage::RequestShutdown {
                                 reason: ShutdownReason::Idle,
                                 end: since,
                             }) {
@@ -167,8 +200,8 @@ impl Coordinator {
                                 continue;
                             };
 
-                            if handle.has_suspended_events() {
-                                info!("Handle has suspended events. Creating new session and reconnecting handle...");
+                            if handle.has_waiting_events() {
+                                info!("Handle has waiting events. Creating new session and reconnecting handle...");
                                 let tx = Self::spawn_session(&self.event_tx, id_generator.next_id(), room.guild_id, room.channel_id, &internal_tx);
                                 handle.reconnect(tx);
                                 if let Err(err) = handle.resume_delivery() {
@@ -179,6 +212,7 @@ impl Coordinator {
                                 self.sessions.remove(&channel_id);
                             }
                         }
+
                         CoordinatorInternalMessage::RejectShutdown { channel_id } => {
                             let Some(handle) = self.sessions.get_mut(&channel_id) else {
                                 error!("Coordinator received reject-shutdown from already disposed session, so just ignore the message.");
@@ -203,7 +237,7 @@ impl Coordinator {
                                 SessionHandle::new(tx)
                             });
 
-                            if let Err(err) = handle.dispatch_or_hold(message) {
+                            if let Err(err) = handle.dispatch(message) {
                                 error!("could not dispatch message: {}", err);
                                 self.sessions.remove(&channel_id);
                             }
@@ -214,7 +248,7 @@ impl Coordinator {
                                 continue;
                             };
 
-                            if let Err(err) = handle.dispatch_or_hold(message) {
+                            if let Err(err) = handle.dispatch(message) {
                                 error!("could not dispatch message: {}", err);
                                 self.sessions.remove(&channel_id);
                             }

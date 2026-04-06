@@ -25,16 +25,20 @@ pub enum RoomStatus {
     Empty,
 }
 
+/// Represents a voice channel session's activity state.
+///
+/// `Room` is the root of the domain model, tracking all participants and their
+/// activities during a single session. It is designed to be independent of
+/// external I/O, receiving time (`Instant`) and events from the caller.
 #[derive(Debug)]
 pub struct Room {
     pub id: RoomId,
     pub guild_id: GuildId,
     pub channel_id: ChannelId,
     pub start: Moment,
-    pub participants: Vec<Participant>, // retains all participant since a room was created.
+    /// The list of participants who have joined this room at any point.
+    pub participants: Vec<Participant>,
 }
-
-pub type RoomResult<T> = Result<T, RoomError>;
 
 impl Room {
     pub fn new(id: RoomId, guild_id: GuildId, channel_id: ChannelId, start: Moment) -> Self {
@@ -53,12 +57,13 @@ impl Room {
             .find(|part| part.identity.user_id == user_id)
     }
 
+    /// Handles a user connecting to the voice channel.
     pub fn handle_connect(
         &mut self,
         now: Instant,
         identity: UserIdentity,
         flags: VoiceStateFlags,
-    ) -> RoomResult<()> {
+    ) -> Result<(), RoomError> {
         debug!("handle connect");
         if let Some(participant) = self.find_participant_mut(identity.user_id) {
             debug!("participant already exists");
@@ -73,6 +78,7 @@ impl Room {
         Ok(())
     }
 
+    /// Returns true if there are no participants currently connected to the room.
     pub fn is_empty(&self) -> bool {
         self.get_status() == RoomStatus::Empty
     }
@@ -85,7 +91,12 @@ impl Room {
         }
     }
 
-    pub fn handle_disconnect(&mut self, now: Instant, user_id: UserId) -> RoomResult<RoomStatus> {
+    /// Handles a user disconnecting from the voice channel.
+    pub fn handle_disconnect(
+        &mut self,
+        now: Instant,
+        user_id: UserId,
+    ) -> Result<RoomStatus, RoomError> {
         debug!("handle disconnect");
         let participant = self
             .find_participant_mut(user_id)
@@ -99,12 +110,13 @@ impl Room {
         Ok(status)
     }
 
+    /// Handles updates to a participant's voice state (e.g., mute, deafen, or screen sharing).
     pub fn handle_update(
         &mut self,
         now: Instant,
         user_id: UserId,
         flags: VoiceStateFlags,
-    ) -> RoomResult<()> {
+    ) -> Result<(), RoomError> {
         debug!("handle update");
         let participant = self
             .find_participant_mut(user_id)
@@ -114,6 +126,16 @@ impl Room {
         Ok(())
     }
 
+    /// Creates a lightweight, thread-safe lease of the current room state.
+    ///
+    /// This is used to share the room's state with other tasks (like the reporter)
+    /// without locking the main room instance.
+    ///
+    /// ### Performance Note
+    /// The recipient should drop the returned lease as soon as possible.
+    /// Holding onto it keeps the reference count of the internal activity history high,
+    /// which prevents efficient in-place updates (via Copy-on-Write) in the main room task
+    /// and forces a full clone of the history vector on every subsequent update.
     pub fn lease(&self) -> RoomLease {
         let participants = self
             .participants
@@ -137,6 +159,7 @@ pub enum ParticipantError {
     InvalidState,
 }
 
+/// Represents a single user's participation and their activity history in a room.
 #[derive(Debug, Clone)]
 pub struct Participant {
     pub identity: UserIdentity,
@@ -154,6 +177,7 @@ impl Participant {
         }
     }
 
+    /// Returns true if the participant is currently connected (i.e., has an ongoing audio interval).
     pub fn is_connected(&self) -> bool {
         self.history
             .audio
@@ -175,6 +199,10 @@ impl Participant {
             muted: flags.is_muted,
             deafened: flags.is_deafened,
         };
+
+        // Use Arc::make_mut to implement Copy-on-Write for the history.
+        // This ensures that we only clone the vector if it's being shared
+        // (e.g., during a reporting snapshot).
         let activities = Arc::make_mut(&mut self.history.audio);
         activities.push(audio_activity);
 
@@ -277,9 +305,12 @@ impl Participant {
     }
 }
 
+/// The activity history of a participant, stored efficiently using `Arc` for sharing.
 #[derive(Debug, Clone)]
 pub struct History {
+    /// Audio activities, including mute and deafen states.
     pub audio: Arc<Vec<AudioActivity>>,
+    /// Screen sharing intervals.
     pub screen_sharing: Arc<Vec<Interval>>,
 }
 
