@@ -4,6 +4,7 @@ use crate::reporting::transformer::transform;
 use crate::reporting::types::RoomSnapshot;
 use crate::reporting::{ParticipantSnapshot, ReportAnchor, transformer};
 use crate::room::{Moment, SessionEvent};
+use better_tokio_select::tokio_select;
 use chrono::TimeDelta;
 use serenity::all::{
     Cache, CacheHttp, Colour, CreateAttachment, CreateComponent, CreateContainer,
@@ -16,7 +17,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use better_tokio_select::tokio_select;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
@@ -299,40 +299,46 @@ impl Reporter {
         let mut last_snapshot: Option<RoomSnapshot> = None;
 
         loop {
-            tokio_select!(biased, match .. {
-                .. if let res = self.session_event_rx.recv() => {
-                    match res {
-                        Ok(SessionEvent::Updated { room }) => {
-                            last_snapshot = Some(RoomSnapshot::from_lease(room));
-                            scheduler.register_event();
-                        }
-                        Ok(SessionEvent::Shutdown { room, end }) => {
-                            let snapshot = RoomSnapshot::from_lease(room);
-                            if let Err(e) = self.perform_report(&snapshot, end, false).await {
-                                error!("Failed to perform final report: {}", e);
+            tokio_select!(
+                biased,
+                match .. {
+                    .. if let res = self.session_event_rx.recv() => {
+                        match res {
+                            Ok(SessionEvent::Updated { room }) => {
+                                last_snapshot = Some(RoomSnapshot::from_lease(room));
+                                scheduler.register_event();
                             }
-                            break;
-                        }
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            warn!("Reporter lagged behind, skipped {} events. Catching up.", skipped);
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            info!("Session event rx closed, shutdown reporter");
-                            break;
+                            Ok(SessionEvent::Shutdown { room, end }) => {
+                                let snapshot = RoomSnapshot::from_lease(room);
+                                if let Err(e) = self.perform_report(&snapshot, end, false).await {
+                                    error!("Failed to perform final report: {}", e);
+                                }
+                                break;
+                            }
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                warn!(
+                                    "Reporter lagged behind, skipped {} events. Catching up.",
+                                    skipped
+                                );
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                info!("Session event rx closed, shutdown reporter");
+                                break;
+                            }
                         }
                     }
-                }
 
-                .. if let _ = tokio::time::sleep_until(scheduler.next_deadline()) => {
-                    if let Some(snapshot) = &last_snapshot {
-                        let now = Moment::now();
-                        if let Err(e) = self.perform_report(snapshot, now, true).await {
-                            error!("Failed to perform regular report: {}", e);
+                    .. if let _ = tokio::time::sleep_until(scheduler.next_deadline()) => {
+                        if let Some(snapshot) = &last_snapshot {
+                            let now = Moment::now();
+                            if let Err(e) = self.perform_report(snapshot, now, true).await {
+                                error!("Failed to perform regular report: {}", e);
+                            }
                         }
+                        scheduler.complete();
                     }
-                    scheduler.complete();
                 }
-            })
+            )
         }
     }
 }

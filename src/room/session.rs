@@ -2,12 +2,11 @@ use crate::room::coordinator::CoordinatorInternalMessage;
 use crate::room::model::{Room, RoomStatus};
 use crate::room::types::VoiceStateFlags;
 use crate::room::{Moment, RoomLease};
+use better_tokio_select::tokio_select;
 use serenity::all::UserId;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use better_tokio_select::tokio_select;
-use tokio::select;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
@@ -167,89 +166,146 @@ impl Session {
         let mut idle_timer = IdleTimer::with_timeout(Duration::from_secs(60));
 
         loop {
-            tokio_select!(biased, match .. {
-                .. if let Some(cmd) = self.rx.recv() => {
-                    match cmd {
-                        SessionMessage::VoiceStateUpdate(voice_state_update) => {
-                            let Some(flags) = voice_state_update.flags else {
-                                info!(user_id = %voice_state_update.user_id, "Participant disconnected");
-                                let status = match self.room.handle_disconnect(voice_state_update.now, voice_state_update.user_id){
-                                    Ok(status) => status,
-                                    Err(error) => {
-                                        warn!(?error, "room inconsistency was detected. just ignored the update.");
-                                        continue;
+            tokio_select!(
+                biased,
+                match .. {
+                    .. if let Some(cmd) = self.rx.recv() => {
+                        match cmd {
+                            SessionMessage::VoiceStateUpdate(voice_state_update) => {
+                                let Some(flags) = voice_state_update.flags else {
+                                    info!(user_id = %voice_state_update.user_id, "Participant disconnected");
+                                    let status = match self.room.handle_disconnect(
+                                        voice_state_update.now,
+                                        voice_state_update.user_id,
+                                    ) {
+                                        Ok(status) => status,
+                                        Err(error) => {
+                                            warn!(
+                                                ?error,
+                                                "room inconsistency was detected. just ignored the update."
+                                            );
+                                            continue;
+                                        }
+                                    };
+                                    if status == RoomStatus::Empty {
+                                        info!("Room is now empty, starting idle countdown");
+                                        idle_timer.start_countdown();
                                     }
+                                    let _ = self.event_tx.send(SessionEvent::Updated {
+                                        room: self.room.lease(),
+                                    });
+
+                                    continue;
                                 };
-                                if status == RoomStatus::Empty {
-                                    info!("Room is now empty, starting idle countdown");
-                                    idle_timer.start_countdown();
+
+                                if self.room.is_connected(voice_state_update.user_id) {
+                                    info!(user_id = %voice_state_update.user_id, flags = ?voice_state_update.flags, "Participant state updated");
+                                    self.room
+                                        .handle_update(
+                                            voice_state_update.now,
+                                            voice_state_update.user_id,
+                                            flags,
+                                        )
+                                        .expect("invalid state");
+                                    let _ = self.event_tx.send(SessionEvent::Updated {
+                                        room: self.room.lease(),
+                                    });
+                                } else {
+                                    info!(user_id = %voice_state_update.user_id, "Participant connected");
+                                    self.room
+                                        .handle_connect(
+                                            voice_state_update.now,
+                                            voice_state_update.user_id,
+                                            flags,
+                                        )
+                                        .expect("invalid state");
+                                    idle_timer.abort();
+                                    let _ = self.event_tx.send(SessionEvent::Updated {
+                                        room: self.room.lease(),
+                                    });
                                 }
-                                let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
+                            }
+                            SessionMessage::RequestShutdown { reason, end } => {
+                                if !self.room.is_empty() {
+                                    warn!(
+                                        ?reason,
+                                        "Shutdown requested but room is not empty. Rejecting."
+                                    );
+                                    if let Err(err) = self.coordinator_tx.send(
+                                        CoordinatorInternalMessage::RejectShutdown {
+                                            channel_id: self.room.channel_id,
+                                        },
+                                    ) {
+                                        error!(error = %err, "Failed to send shutdown rejection");
+                                        let _ = self.event_tx.send(SessionEvent::Shutdown {
+                                            room: self.room.lease(),
+                                            end,
+                                        });
+                                        break;
+                                    }
+                                    continue;
+                                }
 
-                                continue;
-                            };
+                                if reason == ShutdownReason::Idle
+                                    && !idle_timer.has_expired(Instant::now())
+                                {
+                                    info!(
+                                        "Shutdown requested but room is recently active. Rejecting."
+                                    );
+                                    if let Err(err) = self.coordinator_tx.send(
+                                        CoordinatorInternalMessage::RejectShutdown {
+                                            channel_id: self.room.channel_id,
+                                        },
+                                    ) {
+                                        error!(error = %err, "Failed to send shutdown rejection");
+                                        let _ = self.event_tx.send(SessionEvent::Shutdown {
+                                            room: self.room.lease(),
+                                            end,
+                                        });
+                                        break;
+                                    }
+                                    continue;
+                                }
 
-                            if self.room.is_connected(voice_state_update.user_id) {
-                                info!(user_id = %voice_state_update.user_id, flags = ?voice_state_update.flags, "Participant state updated");
-                                self.room.handle_update(voice_state_update.now, voice_state_update.user_id, flags).expect("invalid state");
-                                let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
-                            } else {
-                                info!(user_id = %voice_state_update.user_id, "Participant connected");
-                                self.room.handle_connect(voice_state_update.now, voice_state_update.user_id, flags).expect("invalid state");
-                                idle_timer.abort();
-                                let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
+                                let _ = self.event_tx.send(SessionEvent::Shutdown {
+                                    room: self.room.lease(),
+                                    end,
+                                });
+                                if let Err(err) = self.coordinator_tx.send(
+                                    CoordinatorInternalMessage::AcceptShutdown {
+                                        channel_id: self.room.channel_id,
+                                        room: self.room,
+                                    },
+                                ) {
+                                    error!(error = %err, "Failed to send shutdown acceptance");
+                                }
+
+                                info!("Session stopped");
+                                break;
                             }
                         }
-                        SessionMessage::RequestShutdown{ reason, end } => {
-                            if !self.room.is_empty() {
-                                warn!(?reason, "Shutdown requested but room is not empty. Rejecting.");
-                                if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
-                                    channel_id: self.room.channel_id
-                                }) {
-                                    error!(error = %err, "Failed to send shutdown rejection");
-                                    let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease(), end });
-                                    break;
-                                }
-                                continue;
-                            }
+                    }
 
-                            if reason == ShutdownReason::Idle && !idle_timer.has_expired(Instant::now()) {
-                                info!("Shutdown requested but room is recently active. Rejecting.");
-                                if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::RejectShutdown {
-                                    channel_id: self.room.channel_id
-                                }) {
-                                    error!(error = %err, "Failed to send shutdown rejection");
-                                    let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease(), end });
-                                    break;
-                                }
-                                continue;
+                    .. if let _ = &mut idle_timer => {
+                        idle_timer.wait_for_shutdown_request();
+                        if let Some(status) = idle_timer.status.as_ref() {
+                            info!(idle_since = ?status.start, "Detected idle, starting idle-shutdown sequence...");
+                            if let Err(err) =
+                                self.coordinator_tx.send(CoordinatorInternalMessage::Idle {
+                                    channel_id: self.room.channel_id,
+                                    since: self.room.start.at(status.start),
+                                })
+                            {
+                                error!(error = %err, "Failed to send idle notification");
+                                break;
                             }
-
-                            let _ = self.event_tx.send(SessionEvent::Shutdown { room: self.room.lease(), end });
-                            if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::AcceptShutdown { channel_id: self.room.channel_id, room: self.room }) {
-                                error!(error = %err, "Failed to send shutdown acceptance");
-                            }
-
-                            info!("Session stopped");
-                            break;
+                        } else {
+                            info!("Safety timer fired for long-running session; refreshing timer");
+                            idle_timer.abort();
                         }
                     }
                 }
-
-                .. if let _ = &mut idle_timer => {
-                    idle_timer.wait_for_shutdown_request();
-                    if let Some(status) = idle_timer.status.as_ref() {
-                        info!(idle_since = ?status.start, "Detected idle, starting idle-shutdown sequence...");
-                        if let Err(err) = self.coordinator_tx.send(CoordinatorInternalMessage::Idle { channel_id: self.room.channel_id, since: self.room.start.at(status.start) }) {
-                            error!(error = %err, "Failed to send idle notification");
-                            break;
-                        }
-                    }else {
-                        info!("Safety timer fired for long-running session; refreshing timer");
-                        idle_timer.abort();
-                    }
-                }
-            })
+            )
         }
     }
 }
