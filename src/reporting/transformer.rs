@@ -82,28 +82,37 @@ pub fn calculate_auto_scale(start: Instant, end: Instant) -> Instant {
     start + max(elapsed * 10 / 8, Duration::from_secs(5))
 }
 
-fn choose_suitable_axis(duration: Duration) -> AxisConfig {
-    const AXIS_CONFIG_PRESET: [(u64, u32); 11] = [
-        (604800, 7),
-        (86400, 8),
-        (43200, 6),
-        (21600, 6),
-        (10800, 3),
-        (3600, 6),
-        (1800, 6),
-        (900, 3),
-        (600, 2),
-        (300, 5),
-        (60, 4),
+pub fn choose_suitable_axis(duration: Duration) -> AxisConfig {
+    const AXIS_CONFIG_PRESET: [(u64, &[u32]); 11] = [
+        (604800, &[7, 1]),
+        (86400, &[4, 2, 1]),
+        (43200, &[6, 2]),
+        (21600, &[6, 3]),
+        (10800, &[3]),
+        (3600, &[6, 2, 1]),
+        (1800, &[6, 3]),
+        (900, &[3]),
+        (600, &[2]),
+        (300, &[5, 1]),
+        (60, &[4, 2, 1]),
     ];
 
     let duration_secs = duration.as_secs();
 
-    for (interval_sec, divisions) in AXIS_CONFIG_PRESET {
-        if duration_secs / interval_sec > 1 {
+    for (interval_sec, divisions_preset) in AXIS_CONFIG_PRESET {
+        let majors = duration_secs / interval_sec;
+        if majors > 1 {
             let interval = Duration::from_secs(interval_sec);
-            return AxisConfig::with_minor(MajorTickConfig::without_sec(interval), divisions)
-                .unwrap();
+            for divisions in divisions_preset {
+                if majors * (*divisions as u64) < 10 {
+                    return AxisConfig::with_minor(
+                        MajorTickConfig::without_sec(interval),
+                        *divisions,
+                    )
+                    .unwrap();
+                }
+            }
+            return AxisConfig::with_minor(MajorTickConfig::without_sec(interval), 1).unwrap();
         }
     }
 
