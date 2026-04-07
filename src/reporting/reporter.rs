@@ -16,6 +16,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use better_tokio_select::tokio_select;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
@@ -298,10 +299,8 @@ impl Reporter {
         let mut last_snapshot: Option<RoomSnapshot> = None;
 
         loop {
-            tokio::select! {
-                biased;
-
-                res = self.session_event_rx.recv() => {
+            tokio_select!(biased, match .. {
+                .. if let res = self.session_event_rx.recv() => {
                     match res {
                         Ok(SessionEvent::Updated { room }) => {
                             last_snapshot = Some(RoomSnapshot::from_lease(room));
@@ -324,7 +323,7 @@ impl Reporter {
                     }
                 }
 
-                _ = tokio::time::sleep_until(scheduler.next_deadline()) => {
+                .. if let _ = tokio::time::sleep_until(scheduler.next_deadline()) => {
                     if let Some(snapshot) = &last_snapshot {
                         let now = Moment::now();
                         if let Err(e) = self.perform_report(snapshot, now, true).await {
@@ -333,7 +332,7 @@ impl Reporter {
                     }
                     scheduler.complete();
                 }
-            }
+            })
         }
     }
 }

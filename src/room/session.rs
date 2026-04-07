@@ -6,6 +6,7 @@ use serenity::all::UserId;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
+use better_tokio_select::tokio_select;
 use tokio::select;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{broadcast, mpsc};
@@ -166,10 +167,8 @@ impl Session {
         let mut idle_timer = IdleTimer::with_timeout(Duration::from_secs(60));
 
         loop {
-            select! {
-                biased;
-
-                Some(cmd) = self.rx.recv() => {
+            tokio_select!(biased, match .. {
+                .. if let Some(cmd) = self.rx.recv() => {
                     match cmd {
                         SessionMessage::VoiceStateUpdate(voice_state_update) => {
                             let Some(flags) = voice_state_update.flags else {
@@ -237,7 +236,7 @@ impl Session {
                     }
                 }
 
-                _ = &mut idle_timer => {
+                .. if let _ = &mut idle_timer => {
                     idle_timer.wait_for_shutdown_request();
                     if let Some(status) = idle_timer.status.as_ref() {
                         info!(idle_since = ?status.start, "Detected idle, starting idle-shutdown sequence...");
@@ -250,7 +249,7 @@ impl Session {
                         idle_timer.abort();
                     }
                 }
-            }
+            })
         }
     }
 }
