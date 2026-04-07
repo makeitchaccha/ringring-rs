@@ -5,7 +5,7 @@ use crate::graphics::{
 use crate::infrastructure::MemberVisual;
 use crate::reporting::RoomSnapshot;
 use crate::room::{AudioActivity, Interval};
-use chrono::Local;
+use chrono_tz::Tz;
 use serenity::all::UserId;
 use std::cmp::max;
 use std::collections::HashMap;
@@ -18,6 +18,7 @@ pub fn transform(
     now: Instant,
     room: &RoomSnapshot,
     visuals: &HashMap<UserId, MemberVisual>,
+    timezone: Tz,
 ) -> Timeline {
     let entries = room
         .participants
@@ -69,7 +70,7 @@ pub fn transform(
     Timeline {
         created_at: from,
         terminated_at: to,
-        created_timestamp: room.start.wall.with_timezone(&Local).naive_local(),
+        created_timestamp: room.start.wall.with_timezone(&timezone).naive_local(),
         entries,
         axis: choose_suitable_axis(to - from),
     }

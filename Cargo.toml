@@ -31,6 +31,7 @@ clap = { version = "4.6.0", features = ["derive"] }
 anyhow = "1.0.102"
 serde = { version = "1.0.228", features = ["derive"] }
 better_tokio_select = "0.2.0"
+chrono-tz = { version = "0.10.4", features = ["serde"] }
 
 [features]
 default = ["jemalloc"]

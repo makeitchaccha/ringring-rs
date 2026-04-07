@@ -46,6 +46,7 @@ async fn main() {
                 Subscription {
                     report_channel: entry.report_channel,
                     layout_config: LayoutConfig::default(),
+                    timezone: entry.timezone.unwrap_or(config.timezone),
                 },
             )
         })

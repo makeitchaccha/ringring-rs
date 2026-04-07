@@ -1,4 +1,5 @@
 use anyhow::Context;
+use chrono_tz::Tz;
 use config::{Config, Environment, File};
 use serde::Deserialize;
 use serenity::all::ChannelId;
@@ -23,6 +24,7 @@ pub fn load_config(path: &Path) -> anyhow::Result<AppConfig> {
 pub struct AppConfig {
     pub discord: DiscordConfig,
     pub subscriptions: Vec<SubscriptionEntry>,
+    pub timezone: Tz,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -34,4 +36,5 @@ pub struct DiscordConfig {
 pub struct SubscriptionEntry {
     pub voice_channel: ChannelId,
     pub report_channel: ChannelId,
+    pub timezone: Option<Tz>,
 }
