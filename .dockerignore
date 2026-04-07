@@ -15,3 +15,6 @@ target/
 # Docker
 Dockerfile*
 docker-compose.yml
+
+# Misc
+config.toml
