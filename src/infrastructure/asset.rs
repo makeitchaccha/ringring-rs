@@ -1,15 +1,14 @@
 use image::imageops::FilterType;
-use image::{ImageFormat, ImageReader, imageops};
+use image::{ImageReader, imageops};
 use kmeans_colors::{Kmeans, Sort, get_kmeans};
 use moka::future::Cache;
 use palette::cast::from_component_slice;
 use palette::{FromColor, IntoColor, Lab, Srgba};
 use serenity::all::{GuildId, Http, UserId};
-use std::error::Error;
 use std::io::{BufReader, Cursor};
 use std::sync::Arc;
 use thiserror::Error;
-use tiny_skia::{Color, Pixmap};
+use tiny_skia::{Color, IntSize, Pixmap};
 
 /// Visual assets and color palette derived from a member's avatar.
 #[derive(Clone)]
@@ -35,11 +34,11 @@ pub enum AssetError {
     #[error("Image processing failed: {0}")]
     Image(#[from] image::ImageError),
 
+    #[error("Pixmap construction error")]
+    PixmapConstruction,
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("Failed to decode image: {0}")]
-    PngDecoding(Box<dyn Error + Send + Sync + 'static>),
 
     #[error("Async task join error: {0}")]
     Join(#[from] tokio::task::JoinError),
@@ -134,9 +133,6 @@ impl AssetProvider {
                         }
                     };
 
-                    let mut bytes: Vec<u8> = Vec::new();
-                    avatar_image.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)?;
-
                     let inactive_color = Color::from_rgba(
                         active_color.red(),
                         active_color.green(),
@@ -163,8 +159,11 @@ impl AssetProvider {
                         .unwrap()
                     };
 
-                    let pixmap = Pixmap::decode_png(&bytes)
-                        .map_err(|e| AssetError::PngDecoding(Box::new(e)))?;
+                    let pixmap = Pixmap::from_vec(
+                        avatar_image.into_raw(),
+                        IntSize::from_wh(avatar_size, avatar_size).unwrap(),
+                    )
+                    .ok_or(AssetError::PixmapConstruction)?;
 
                     Ok(MemberVisual {
                         avatar: pixmap,
