@@ -6,10 +6,10 @@ use crate::reporting::{ParticipantSnapshot, ReportAnchor, transformer};
 use crate::room::{Moment, SessionEvent};
 use chrono::TimeDelta;
 use serenity::all::{
-    Colour, CreateAttachment, CreateComponent, CreateContainer, CreateContainerComponent,
-    CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay, FormattedTimestamp,
-    FormattedTimestampStyle, GuildId, Http, Mentionable, SeparatorSpacingSize, Timestamp, UserId,
-    colours,
+    Cache, CacheHttp, Colour, CreateAttachment, CreateComponent, CreateContainer,
+    CreateContainerComponent, CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay,
+    FormattedTimestamp, FormattedTimestampStyle, GuildId, Http, Mentionable, SeparatorSpacingSize,
+    Timestamp, UserId, colours,
 };
 use serenity::builder::{CreateMediaGallery, CreateUnfurledMediaItem};
 use std::borrow::Cow;
@@ -52,6 +52,7 @@ impl<'a> Report<'a> {
 
 pub struct Reporter {
     http: Arc<Http>,
+    cache: Arc<Cache>,
     asset_provider: AssetProvider,
     renderer: timeline::Renderer,
     session_event_rx: broadcast::Receiver<SessionEvent>,
@@ -65,6 +66,7 @@ impl Reporter {
 
     pub fn new(
         http: Arc<Http>,
+        cache: Arc<Cache>,
         asset_provider: AssetProvider,
         renderer: timeline::Renderer,
         session_event_rx: broadcast::Receiver<SessionEvent>,
@@ -72,6 +74,7 @@ impl Reporter {
     ) -> Self {
         Self {
             http,
+            cache,
             asset_provider,
             renderer,
             session_event_rx,
@@ -81,12 +84,20 @@ impl Reporter {
 
     pub fn spawn(
         http: Arc<Http>,
+        cache: Arc<Cache>,
         asset_provider: AssetProvider,
         renderer: timeline::Renderer,
         session_event_rx: broadcast::Receiver<SessionEvent>,
         anchor: ReportAnchor,
     ) {
-        let reporter = Self::new(http, asset_provider, renderer, session_event_rx, anchor);
+        let reporter = Self::new(
+            http,
+            cache,
+            asset_provider,
+            renderer,
+            session_event_rx,
+            anchor,
+        );
         tokio::spawn(reporter.run());
     }
 
@@ -116,14 +127,43 @@ impl Reporter {
         }
     }
 
-    fn format_history(participants: &[ParticipantSnapshot], now: Instant) -> String {
+    async fn format_history(
+        participants: &[ParticipantSnapshot],
+        now: Instant,
+        guild_id: GuildId,
+        http: impl CacheHttp,
+    ) -> String {
+        let mut names = HashMap::new();
+
+        for part in participants {
+            let name = match guild_id
+                .member(&http, part.id)
+                .await
+                .map(|member| member.display_name().to_owned())
+            {
+                Ok(name) => name,
+                Err(_) => part
+                    .id
+                    .to_user(&http)
+                    .await
+                    .map(|user| user.display_name().to_owned())
+                    .unwrap_or("".to_string()),
+            };
+            names.insert(part.id, name);
+        }
+
         participants
             .iter()
             .map(|p| {
                 let total_minutes = p.calculate_duration(now).as_secs() / 60;
                 let hours = total_minutes / 60;
                 let minutes = total_minutes % 60;
-                format!("- ⏳ `{:>2}:{:02}` {}", hours, minutes, p.id.mention())
+                format!(
+                    "- ⏳ `{:>2}:{:02}` {}",
+                    hours,
+                    minutes,
+                    names.get(&p.id).unwrap()
+                )
             })
             .collect::<Vec<String>>()
             .join("\n")
@@ -149,7 +189,7 @@ impl Reporter {
                 .await
             else {
                 // TODO: fallback
-                return Err(format!("Cannot fetch member visual: {}", participant.id,));
+                return Err(format!("Cannot fetch member visual: {}", participant.id));
             };
 
             visuals.insert(participant.id, visual);
@@ -172,7 +212,13 @@ impl Reporter {
 
         let elapsed =
             TimeDelta::from_std(now.mono - snapshot.start.mono).unwrap_or(TimeDelta::zero());
-        let history = Self::format_history(&snapshot.participants, now.mono);
+        let history = Self::format_history(
+            &snapshot.participants,
+            now.mono,
+            snapshot.guild_id,
+            &(Some(&self.cache), self.http.as_ref()),
+        )
+        .await;
         let (title, description, timeline, colour) = if ongoing {
             (
                 format!("## 📢【通話中】{}", snapshot.channel_id.mention()),

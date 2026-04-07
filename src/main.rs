@@ -78,6 +78,7 @@ async fn main() {
     // 6. Spawn Publisher (The Bridge)
     let publisher = Publisher::new(
         client.http.clone(),
+        client.cache.clone(),
         subscription_provider.clone(),
         asset_provider,
         coordinator_event_rx,
