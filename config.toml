@@ -1,0 +1,18 @@
+[discord]
+token = "discord bot token"
+
+[[subscriptions]]
+report_channel = 1438140675454668861
+voice_channel = 617657667434971139
+
+[[subscriptions]]
+report_channel = 1438140675454668861
+voice_channel = 657912857270288396
+
+[[subscriptions]]
+report_channel = 1438140675454668861
+voice_channel = 939790563228651540
+
+[[subscriptions]]
+report_channel = 1438140675454668861
+voice_channel = 841290297023135754

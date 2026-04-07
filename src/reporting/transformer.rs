@@ -30,7 +30,7 @@ pub fn transform(
         })
         .map(|p| {
             let visual = visuals
-                .get(&p.identity.user_id)
+                .get(&p.id)
                 .expect("visual must be pre-fetched before rendering.");
 
             let filtered_audio_activities = p

@@ -58,9 +58,6 @@ async fn main() {
 
     let subscription_provider = Arc::new(StaticSubscriptionProvider::new(subscriptions));
 
-    // 2. Initialize infrastructure
-    let asset_provider = AssetProvider::new(reqwest::Client::new());
-
     // 3. Spawn Coordinator (The Heart)
     let (coordinator_handle, coordinator_event_rx) = Coordinator::spawn();
 
@@ -75,6 +72,8 @@ async fn main() {
         )))
         .await
         .expect("Err creating client");
+
+    let asset_provider = AssetProvider::new(reqwest::Client::new(), client.http.clone());
 
     // 6. Spawn Publisher (The Bridge)
     let publisher = Publisher::new(

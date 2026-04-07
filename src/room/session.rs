@@ -1,6 +1,6 @@
 use crate::room::coordinator::CoordinatorInternalMessage;
 use crate::room::model::{Room, RoomStatus};
-use crate::room::types::{UserIdentity, VoiceStateFlags};
+use crate::room::types::VoiceStateFlags;
 use crate::room::{Moment, RoomLease};
 use serenity::all::UserId;
 use std::pin::Pin;
@@ -10,7 +10,7 @@ use tokio::select;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 /// A smart proxy for communicating with a [`Session`].
 ///
@@ -103,22 +103,18 @@ pub enum ShutdownReason {
 
 /// Messages sent from the coordinator to a session.
 pub enum SessionMessage {
-    /// A user has joined the voice channel.
-    Connect {
-        now: Instant,
-        identity: UserIdentity,
-        flags: VoiceStateFlags,
-    },
-    /// A user has left the voice channel.
-    Disconnect { now: Instant, user_id: UserId },
-    /// A user's voice state (mute/deaf/screen) has changed.
-    Update {
-        now: Instant,
-        user_id: UserId,
-        flags: VoiceStateFlags,
-    },
+    VoiceStateUpdate(VoiceStateUpdate),
     /// Request the session to shut down gracefully.
-    RequestShutdown { reason: ShutdownReason, end: Moment },
+    RequestShutdown {
+        reason: ShutdownReason,
+        end: Moment,
+    },
+}
+
+pub struct VoiceStateUpdate {
+    pub now: Instant,
+    pub user_id: UserId,
+    pub flags: Option<VoiceStateFlags>,
 }
 
 /// Events emitted by a session to its subscribers (e.g., for reporting).
@@ -175,27 +171,36 @@ impl Session {
 
                 Some(cmd) = self.rx.recv() => {
                     match cmd {
-                        SessionMessage::Connect{ now, identity, flags } => {
-                            info!(user = %identity.name, user_id = %identity.user_id, "Participant connected");
-                            self.room.handle_connect(now, identity, flags).expect("invalid state");
-                            idle_timer.abort();
-                            let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
-                        }
-                        SessionMessage::Disconnect{ now, user_id } => {
-                            info!(%user_id, "Participant disconnected");
-                            let status = self.room.handle_disconnect(now, user_id).expect("invalid state");
-                            if status == RoomStatus::Empty {
-                                info!("Room is now empty, starting idle countdown");
-                                idle_timer.start_countdown();
-                            }
-                            let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
-                        }
-                        SessionMessage::Update{ now, user_id, flags } => {
-                            debug!(%user_id, ?flags, "Participant state updated");
-                            self.room.handle_update(now, user_id, flags).expect("invalid state");
-                            let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
-                        }
+                        SessionMessage::VoiceStateUpdate(voice_state_update) => {
+                            let Some(flags) = voice_state_update.flags else {
+                                info!(user_id = %voice_state_update.user_id, "Participant disconnected");
+                                let status = match self.room.handle_disconnect(voice_state_update.now, voice_state_update.user_id){
+                                    Ok(status) => status,
+                                    Err(error) => {
+                                        warn!(?error, "room inconsistency was detected. just ignored the update.");
+                                        continue;
+                                    }
+                                };
+                                if status == RoomStatus::Empty {
+                                    info!("Room is now empty, starting idle countdown");
+                                    idle_timer.start_countdown();
+                                }
+                                let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
 
+                                continue;
+                            };
+
+                            if self.room.is_connected(voice_state_update.user_id) {
+                                info!(user_id = %voice_state_update.user_id, flags = ?voice_state_update.flags, "Participant state updated");
+                                self.room.handle_update(voice_state_update.now, voice_state_update.user_id, flags).expect("invalid state");
+                                let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
+                            } else {
+                                info!(user_id = %voice_state_update.user_id, "Participant connected");
+                                self.room.handle_connect(voice_state_update.now, voice_state_update.user_id, flags).expect("invalid state");
+                                idle_timer.abort();
+                                let _ = self.event_tx.send(SessionEvent::Updated { room: self.room.lease() });
+                            }
+                        }
                         SessionMessage::RequestShutdown{ reason, end } => {
                             if !self.room.is_empty() {
                                 warn!(?reason, "Shutdown requested but room is not empty. Rejecting.");
@@ -233,7 +238,6 @@ impl Session {
                 }
 
                 _ = &mut idle_timer => {
-
                     idle_timer.wait_for_shutdown_request();
                     if let Some(status) = idle_timer.status.as_ref() {
                         info!(idle_since = ?status.start, "Detected idle, starting idle-shutdown sequence...");

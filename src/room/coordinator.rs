@@ -1,8 +1,10 @@
 use crate::room::model::Room;
-use crate::room::session::{SessionEvent, SessionHandle, SessionMessage, ShutdownReason};
+use crate::room::session::{
+    SessionEvent, SessionHandle, SessionMessage, ShutdownReason, VoiceStateUpdate,
+};
 use crate::room::types::Moment;
 use crate::room::{RoomId, RoomIdGenerator, Session};
-use serenity::all::{ChannelId, GuildId};
+use serenity::all::{ChannelId, GuildId, UserId};
 use std::collections::HashMap;
 use tokio::select;
 use tokio::sync::mpsc::error::SendError;
@@ -29,7 +31,7 @@ impl CoordinatorHandle {
         &self,
         channel_id: ChannelId,
         guild_id: GuildId,
-        message: SessionMessage,
+        message: VoiceStateUpdate,
     ) -> Result<(), SendError<CoordinatorMessage>> {
         self.tx.send(CoordinatorMessage::Track {
             channel_id,
@@ -41,8 +43,8 @@ impl CoordinatorHandle {
     /// Notifies a session of an event without creating a new session if it doesn't exist.
     pub fn notify(
         &self,
-        channel_id: ChannelId,
-        message: SessionMessage,
+        channel_id: Option<ChannelId>,
+        message: VoiceStateUpdate,
     ) -> Result<(), SendError<CoordinatorMessage>> {
         self.tx.send(CoordinatorMessage::Notify {
             channel_id,
@@ -62,14 +64,14 @@ pub enum CoordinatorEvent {
 pub enum CoordinatorMessage {
     /// Dispatch a message to a session, creating it if necessary.
     Track {
-        channel_id: ChannelId,
         guild_id: GuildId,
-        message: SessionMessage,
+        channel_id: ChannelId,
+        message: VoiceStateUpdate,
     },
     /// Dispatch a message to an existing session.
     Notify {
-        channel_id: ChannelId,
-        message: SessionMessage,
+        channel_id: Option<ChannelId>,
+        message: VoiceStateUpdate,
     },
 }
 
@@ -161,6 +163,7 @@ impl Coordinator {
         info!("Starting coordinator loop");
 
         let mut id_generator = RoomIdGenerator::new();
+        let mut user_locations: HashMap<UserId, ChannelId> = HashMap::new();
 
         let (internal_tx, mut internal_rx) = mpsc::unbounded_channel();
 
@@ -231,27 +234,67 @@ impl Coordinator {
                 Some(message) = self.rx.recv() => {
                     match message {
                         CoordinatorMessage::Track { channel_id, guild_id, message } => {
+                            if let Some(user_location) = user_locations.get(&message.user_id) && *user_location != channel_id && let Some(handle) = self.sessions.get_mut(user_location) {
+                                if let Err(error) = handle.dispatch(SessionMessage::VoiceStateUpdate(VoiceStateUpdate{
+                                    now: message.now,
+                                    user_id: message.user_id,
+                                    flags: None
+                                })) {
+                                    error!(?error, "could not dispatch message");
+                                    self.sessions.remove(user_location);
+                                };
+                            }
+
+
                             let handle = self.sessions.entry(channel_id).or_insert_with(|| {
                                 let tx = Self::spawn_session(&self.event_tx, id_generator.next_id(), guild_id, channel_id, &internal_tx);
 
                                 SessionHandle::new(tx)
                             });
 
-                            if let Err(err) = handle.dispatch(message) {
-                                error!("could not dispatch message: {}", err);
+                            let user_id = message.user_id;
+                            if let Err(error) = handle.dispatch(
+                                SessionMessage::VoiceStateUpdate(message)
+                            ) {
+                                error!(?error, "could not dispatch message");
                                 self.sessions.remove(&channel_id);
                             }
+                            user_locations.insert(user_id, channel_id);
                         },
-                        CoordinatorMessage::Notify { channel_id, message } => {
+                        CoordinatorMessage::Notify {
+                            channel_id,
+                            message
+                        } => {
+                            if let Some(user_location) = user_locations.get(&message.user_id) && channel_id.is_none_or(|channel_id| channel_id != *user_location) && let Some(handle) = self.sessions.get_mut(user_location) {
+                                if let Err(error) = handle.dispatch(SessionMessage::VoiceStateUpdate(VoiceStateUpdate{
+                                    now: message.now,
+                                    user_id: message.user_id,
+                                    flags: None
+                                })) {
+                                    error!(?error, "could not dispatch message");
+                                    self.sessions.remove(user_location);
+                                    user_locations.remove(&message.user_id);
+                                };
+                            }
+
+                            let Some(channel_id) = channel_id else{
+                                // just ignore
+                                continue;
+                            };
+
                             let Some(handle) = self.sessions.get_mut(&channel_id) else {
                                 // just ignore
                                 continue;
                             };
 
-                            if let Err(err) = handle.dispatch(message) {
+                            let user_id = message.user_id;
+                            if let Err(err) = handle.dispatch(
+                                SessionMessage::VoiceStateUpdate(message)
+                            ) {
                                 error!("could not dispatch message: {}", err);
                                 self.sessions.remove(&channel_id);
                             }
+                            user_locations.insert(user_id, channel_id);
                         }
                     }
                 }

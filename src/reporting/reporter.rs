@@ -123,7 +123,7 @@ impl Reporter {
                 let total_minutes = p.calculate_duration(now).as_secs() / 60;
                 let hours = total_minutes / 60;
                 let minutes = total_minutes % 60;
-                format!("- ⏳ `{:>2}:{:02}` {}", hours, minutes, p.identity.name)
+                format!("- ⏳ `{:>2}:{:02}` {}", hours, minutes, p.id.mention())
             })
             .collect::<Vec<String>>()
             .join("\n")
@@ -145,21 +145,14 @@ impl Reporter {
         let mut visuals = HashMap::new();
         for participant in participants {
             let Ok(visual) = asset_provider
-                .get_members_visual(
-                    guild_id,
-                    participant.identity.user_id,
-                    &participant.identity.face,
-                )
+                .get_members_visual(guild_id, participant.id)
                 .await
             else {
                 // TODO: fallback
-                return Err(format!(
-                    "Cannot fetch member visual: {}",
-                    participant.identity.user_id
-                ));
+                return Err(format!("Cannot fetch member visual: {}", participant.id,));
             };
 
-            visuals.insert(participant.identity.user_id, visual);
+            visuals.insert(participant.id, visual);
         }
         Ok(visuals)
     }

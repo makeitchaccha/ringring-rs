@@ -4,7 +4,7 @@ use kmeans_colors::{Kmeans, Sort, get_kmeans};
 use moka::future::Cache;
 use palette::cast::from_component_slice;
 use palette::{FromColor, IntoColor, Lab, Srgba};
-use serenity::all::{GuildId, UserId};
+use serenity::all::{GuildId, Http, UserId};
 use std::error::Error;
 use std::io::{BufReader, Cursor};
 use std::sync::Arc;
@@ -26,6 +26,9 @@ pub struct MemberVisual {
 
 #[derive(Debug, Error)]
 pub enum AssetError {
+    #[error("Serenity request failed: {0}")]
+    Serenity(#[from] serenity::Error),
+
     #[error("Network request failed: {0}")]
     Reqwest(#[from] reqwest::Error),
 
@@ -49,14 +52,16 @@ pub enum AssetError {
 #[derive(Clone)]
 pub struct AssetProvider {
     client: reqwest::Client,
+    serenity: Arc<Http>,
     cache: Cache<(GuildId, UserId), MemberVisual>,
     avatar_size: u32,
 }
 
 impl AssetProvider {
-    pub fn new(client: reqwest::Client) -> Self {
+    pub fn new(client: reqwest::Client, serenity: Arc<Http>) -> Self {
         Self {
             client,
+            serenity,
             cache: Cache::new(128),
             avatar_size: 64,
         }
@@ -75,12 +80,12 @@ impl AssetProvider {
         &self,
         guild_id: GuildId,
         user_id: UserId,
-        avatar_url: &str,
     ) -> Result<MemberVisual, Arc<AssetError>> {
         let entry = self
             .cache
             .entry((guild_id, user_id))
             .or_try_insert_with::<_, AssetError>(async {
+                let avatar_url = self.serenity.get_member(guild_id, user_id).await?.face();
                 let request = self.client.get(avatar_url).build()?;
 
                 let response = self.client.execute(request).await?;
