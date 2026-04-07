@@ -300,7 +300,7 @@ impl Participant {
 
     pub fn lease(&self) -> ParticipantLease {
         ParticipantLease {
-            id: self.id.clone(),
+            id: self.id,
             history: self.history.clone(),
         }
     }

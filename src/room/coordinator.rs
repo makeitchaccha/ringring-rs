@@ -4,9 +4,9 @@ use crate::room::session::{
 };
 use crate::room::types::Moment;
 use crate::room::{RoomId, RoomIdGenerator, Session};
+use better_tokio_select::tokio_select;
 use serenity::all::{ChannelId, GuildId, UserId};
 use std::collections::HashMap;
-use tokio::select;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
@@ -168,138 +168,175 @@ impl Coordinator {
         let (internal_tx, mut internal_rx) = mpsc::unbounded_channel();
 
         loop {
-            select! {
-                biased;
-                Some(message) = internal_rx.recv() => {
-                    match message {
-                        CoordinatorInternalMessage::Idle { channel_id, since } => {
-                            let Some(handle) = self.sessions.get_mut(&channel_id) else {
-                                warn!("Coordinator received idle message from already disposed session, so just ignore the message.");
-                                continue;
-                            };
+            tokio_select!(
+                biased,
+                match .. {
+                    .. if let Some(message) = internal_rx.recv() => {
+                        match message {
+                            CoordinatorInternalMessage::Idle { channel_id, since } => {
+                                let Some(handle) = self.sessions.get_mut(&channel_id) else {
+                                    warn!(
+                                        "Coordinator received idle message from already disposed session, so just ignore the message."
+                                    );
+                                    continue;
+                                };
 
-                            if handle.is_suspended() {
-                                warn!("Coordinator received idle message while waiting for session response, so just ignore the message.");
-                                continue;
-                            }
+                                if handle.is_suspended() {
+                                    warn!(
+                                        "Coordinator received idle message while waiting for session response, so just ignore the message."
+                                    );
+                                    continue;
+                                }
 
-                            info!("Started shutdown sequence for session:{}", channel_id);
+                                info!("Started shutdown sequence for session:{}", channel_id);
 
-                            // 1. Suspend normal event delivery to prevent race conditions during shutdown.
-                            handle.suspend_delivery();
+                                // 1. Suspend normal event delivery to prevent race conditions during shutdown.
+                                handle.suspend_delivery();
 
-                            // 2. Force-dispatch a shutdown request. This bypasses the buffer we just started.
-                            if let Err(err) = handle.force_dispatch(SessionMessage::RequestShutdown {
-                                reason: ShutdownReason::Idle,
-                                end: since,
-                            }) {
-                                warn!("could not request shutdown: {}", err);
-                                self.sessions.remove(&channel_id);
-                            }
-                        }
-                        CoordinatorInternalMessage::AcceptShutdown { channel_id, room } => {
-                            let Some(handle) = self.sessions.get_mut(&channel_id) else {
-                                warn!("Coordinator received accept-shutdown, so just ignore the message.");
-                                continue;
-                            };
-
-                            if handle.has_waiting_events() {
-                                info!("Handle has waiting events. Creating new session and reconnecting handle...");
-                                let tx = Self::spawn_session(&self.event_tx, id_generator.next_id(), room.guild_id, room.channel_id, &internal_tx);
-                                handle.reconnect(tx);
-                                if let Err(err) = handle.resume_delivery() {
-                                    error!("failed to resume handle: {}", err);
+                                // 2. Force-dispatch a shutdown request. This bypasses the buffer we just started.
+                                if let Err(err) =
+                                    handle.force_dispatch(SessionMessage::RequestShutdown {
+                                        reason: ShutdownReason::Idle,
+                                        end: since,
+                                    })
+                                {
+                                    warn!("could not request shutdown: {}", err);
                                     self.sessions.remove(&channel_id);
                                 }
-                            } else {
-                                self.sessions.remove(&channel_id);
-                                user_locations.retain(|_, l| *l != channel_id);
                             }
-                        }
+                            CoordinatorInternalMessage::AcceptShutdown { channel_id, room } => {
+                                let Some(handle) = self.sessions.get_mut(&channel_id) else {
+                                    warn!(
+                                        "Coordinator received accept-shutdown, so just ignore the message."
+                                    );
+                                    continue;
+                                };
 
-                        CoordinatorInternalMessage::RejectShutdown { channel_id } => {
-                            let Some(handle) = self.sessions.get_mut(&channel_id) else {
-                                error!("Coordinator received reject-shutdown from already disposed session, so just ignore the message.");
-                                continue;
-                            };
+                                if handle.has_waiting_events() {
+                                    info!(
+                                        "Handle has waiting events. Creating new session and reconnecting handle..."
+                                    );
+                                    let tx = Self::spawn_session(
+                                        &self.event_tx,
+                                        id_generator.next_id(),
+                                        room.guild_id,
+                                        room.channel_id,
+                                        &internal_tx,
+                                    );
+                                    handle.reconnect(tx);
+                                    if let Err(err) = handle.resume_delivery() {
+                                        error!("failed to resume handle: {}", err);
+                                        self.sessions.remove(&channel_id);
+                                    }
+                                } else {
+                                    self.sessions.remove(&channel_id);
+                                    user_locations.retain(|_, l| *l != channel_id);
+                                }
+                            }
 
-                            if let Err(err) = handle.resume_delivery() {
-                                warn!("could not resume delivery: {}", err);
-                                self.sessions.remove(&channel_id);
+                            CoordinatorInternalMessage::RejectShutdown { channel_id } => {
+                                let Some(handle) = self.sessions.get_mut(&channel_id) else {
+                                    error!(
+                                        "Coordinator received reject-shutdown from already disposed session, so just ignore the message."
+                                    );
+                                    continue;
+                                };
+
+                                if let Err(err) = handle.resume_delivery() {
+                                    warn!("could not resume delivery: {}", err);
+                                    self.sessions.remove(&channel_id);
+                                }
                             }
                         }
                     }
-                }
 
-
-                Some(message) = self.rx.recv() => {
-                    match message {
-                        CoordinatorMessage::Track { channel_id, guild_id, message } => {
-                            if let Some(user_location) = user_locations.get(&message.user_id) && *user_location != channel_id && let Some(handle) = self.sessions.get_mut(user_location) {
-                                if let Err(error) = handle.dispatch(SessionMessage::VoiceStateUpdate(VoiceStateUpdate{
-                                    now: message.now,
-                                    user_id: message.user_id,
-                                    flags: None
-                                })) {
+                    .. if let Some(message) = self.rx.recv() => {
+                        match message {
+                            CoordinatorMessage::Track {
+                                channel_id,
+                                guild_id,
+                                message,
+                            } => {
+                                if let Some(user_location) = user_locations.get(&message.user_id)
+                                    && *user_location != channel_id
+                                    && let Some(handle) = self.sessions.get_mut(user_location)
+                                    && let Err(error) = handle.dispatch(
+                                        SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+                                            now: message.now,
+                                            user_id: message.user_id,
+                                            flags: None,
+                                        }),
+                                    )
+                                {
                                     error!(?error, "could not dispatch message");
                                     self.sessions.remove(user_location);
-                                };
+                                }
+
+                                let handle = self.sessions.entry(channel_id).or_insert_with(|| {
+                                    let tx = Self::spawn_session(
+                                        &self.event_tx,
+                                        id_generator.next_id(),
+                                        guild_id,
+                                        channel_id,
+                                        &internal_tx,
+                                    );
+
+                                    SessionHandle::new(tx)
+                                });
+
+                                let user_id = message.user_id;
+                                if let Err(error) =
+                                    handle.dispatch(SessionMessage::VoiceStateUpdate(message))
+                                {
+                                    error!(?error, "could not dispatch message");
+                                    self.sessions.remove(&channel_id);
+                                }
+                                user_locations.insert(user_id, channel_id);
                             }
-
-
-                            let handle = self.sessions.entry(channel_id).or_insert_with(|| {
-                                let tx = Self::spawn_session(&self.event_tx, id_generator.next_id(), guild_id, channel_id, &internal_tx);
-
-                                SessionHandle::new(tx)
-                            });
-
-                            let user_id = message.user_id;
-                            if let Err(error) = handle.dispatch(
-                                SessionMessage::VoiceStateUpdate(message)
-                            ) {
-                                error!(?error, "could not dispatch message");
-                                self.sessions.remove(&channel_id);
-                            }
-                            user_locations.insert(user_id, channel_id);
-                        },
-                        CoordinatorMessage::Notify {
-                            channel_id,
-                            message
-                        } => {
-                            if let Some(user_location) = user_locations.get(&message.user_id) && channel_id.is_none_or(|channel_id| channel_id != *user_location) && let Some(handle) = self.sessions.get_mut(user_location) {
-                                if let Err(error) = handle.dispatch(SessionMessage::VoiceStateUpdate(VoiceStateUpdate{
-                                    now: message.now,
-                                    user_id: message.user_id,
-                                    flags: None
-                                })) {
+                            CoordinatorMessage::Notify {
+                                channel_id,
+                                message,
+                            } => {
+                                if let Some(user_location) = user_locations.get(&message.user_id)
+                                    && channel_id
+                                        .is_none_or(|channel_id| channel_id != *user_location)
+                                    && let Some(handle) = self.sessions.get_mut(user_location)
+                                    && let Err(error) = handle.dispatch(
+                                        SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+                                            now: message.now,
+                                            user_id: message.user_id,
+                                            flags: None,
+                                        }),
+                                    )
+                                {
                                     error!(?error, "could not dispatch message");
                                     self.sessions.remove(user_location);
                                     user_locations.remove(&message.user_id);
                                 };
+
+                                let Some(channel_id) = channel_id else {
+                                    // just ignore
+                                    continue;
+                                };
+
+                                let Some(handle) = self.sessions.get_mut(&channel_id) else {
+                                    // just ignore
+                                    continue;
+                                };
+
+                                let user_id = message.user_id;
+                                if let Err(err) =
+                                    handle.dispatch(SessionMessage::VoiceStateUpdate(message))
+                                {
+                                    error!("could not dispatch message: {}", err);
+                                    self.sessions.remove(&channel_id);
+                                }
+                                user_locations.insert(user_id, channel_id);
                             }
-
-                            let Some(channel_id) = channel_id else{
-                                // just ignore
-                                continue;
-                            };
-
-                            let Some(handle) = self.sessions.get_mut(&channel_id) else {
-                                // just ignore
-                                continue;
-                            };
-
-                            let user_id = message.user_id;
-                            if let Err(err) = handle.dispatch(
-                                SessionMessage::VoiceStateUpdate(message)
-                            ) {
-                                error!("could not dispatch message: {}", err);
-                                self.sessions.remove(&channel_id);
-                            }
-                            user_locations.insert(user_id, channel_id);
                         }
                     }
                 }
-            }
+            );
         }
     }
 }

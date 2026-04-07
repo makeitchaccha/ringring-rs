@@ -51,8 +51,8 @@ impl EventHandler for VoiceHandler {
                 }
 
                 for voice_state in &voice_states {
-                    if let Some(channel) = voice_state.channel_id {
-                        if let Err(error) = self.coordinator_handle.track(
+                    if let Some(channel) = voice_state.channel_id
+                        && let Err(error) = self.coordinator_handle.track(
                             channel,
                             voice_state.guild_id.unwrap(),
                             room::VoiceStateUpdate {
@@ -60,9 +60,9 @@ impl EventHandler for VoiceHandler {
                                 user_id: voice_state.user_id,
                                 flags: Some(voice_state.into()),
                             },
-                        ) {
-                            error!(?error, "Error sending voice state update");
-                        }
+                        )
+                    {
+                        error!(?error, "Error sending voice state update");
                     }
                 }
             }
