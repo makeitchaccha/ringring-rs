@@ -44,7 +44,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         file.write_all(bytes.as_slice())?;
 
         duration = duration.mul_f32(1.05);
-
     }
 
     Ok(())
