@@ -213,6 +213,7 @@ impl Coordinator {
                                 }
                             } else {
                                 self.sessions.remove(&channel_id);
+                                user_locations.retain(|_, l| *l != channel_id);
                             }
                         }
 
