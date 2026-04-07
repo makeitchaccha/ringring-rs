@@ -1,4 +1,3 @@
-
 FROM rust:1.94-slim-bookworm AS planner
 LABEL authors="yuyaprgrm"
 WORKDIR /app

@@ -4,12 +4,13 @@ use crate::reporting::transformer::transform;
 use crate::reporting::types::RoomSnapshot;
 use crate::reporting::{ParticipantSnapshot, ReportAnchor, transformer};
 use crate::room::{Moment, SessionEvent};
+use better_tokio_select::tokio_select;
 use chrono::TimeDelta;
 use serenity::all::{
-    Colour, CreateAttachment, CreateComponent, CreateContainer, CreateContainerComponent,
-    CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay, FormattedTimestamp,
-    FormattedTimestampStyle, GuildId, Http, Mentionable, SeparatorSpacingSize, Timestamp, UserId,
-    colours,
+    Cache, CacheHttp, Colour, CreateAttachment, CreateComponent, CreateContainer,
+    CreateContainerComponent, CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay,
+    FormattedTimestamp, FormattedTimestampStyle, GuildId, Http, Mentionable, SeparatorSpacingSize,
+    Timestamp, UserId, colours,
 };
 use serenity::builder::{CreateMediaGallery, CreateUnfurledMediaItem};
 use std::borrow::Cow;
@@ -52,6 +53,7 @@ impl<'a> Report<'a> {
 
 pub struct Reporter {
     http: Arc<Http>,
+    cache: Arc<Cache>,
     asset_provider: AssetProvider,
     renderer: timeline::Renderer,
     session_event_rx: broadcast::Receiver<SessionEvent>,
@@ -65,6 +67,7 @@ impl Reporter {
 
     pub fn new(
         http: Arc<Http>,
+        cache: Arc<Cache>,
         asset_provider: AssetProvider,
         renderer: timeline::Renderer,
         session_event_rx: broadcast::Receiver<SessionEvent>,
@@ -72,6 +75,7 @@ impl Reporter {
     ) -> Self {
         Self {
             http,
+            cache,
             asset_provider,
             renderer,
             session_event_rx,
@@ -81,12 +85,20 @@ impl Reporter {
 
     pub fn spawn(
         http: Arc<Http>,
+        cache: Arc<Cache>,
         asset_provider: AssetProvider,
         renderer: timeline::Renderer,
         session_event_rx: broadcast::Receiver<SessionEvent>,
         anchor: ReportAnchor,
     ) {
-        let reporter = Self::new(http, asset_provider, renderer, session_event_rx, anchor);
+        let reporter = Self::new(
+            http,
+            cache,
+            asset_provider,
+            renderer,
+            session_event_rx,
+            anchor,
+        );
         tokio::spawn(reporter.run());
     }
 
@@ -109,21 +121,50 @@ impl Reporter {
             )])
             .accent_color(accent_color),
             footer: CreateTextDisplay::new(format!(
-                "-# ringring-rs v26.4.5 {}\n-# rendering {}ms",
+                "-# ringring-rs v26.4.7 {}\n-# rendering {}ms",
                 FormattedTimestamp::new(timestamp, Some(FormattedTimestampStyle::RelativeTime)),
                 rendering_elapsed.as_millis(),
             )),
         }
     }
 
-    fn format_history(participants: &[ParticipantSnapshot], now: Instant) -> String {
+    async fn format_history(
+        participants: &[ParticipantSnapshot],
+        now: Instant,
+        guild_id: GuildId,
+        http: impl CacheHttp,
+    ) -> String {
+        let mut names = HashMap::new();
+
+        for part in participants {
+            let name = match guild_id
+                .member(&http, part.id)
+                .await
+                .map(|member| member.display_name().to_owned())
+            {
+                Ok(name) => name,
+                Err(_) => part
+                    .id
+                    .to_user(&http)
+                    .await
+                    .map(|user| user.display_name().to_owned())
+                    .unwrap_or("".to_string()),
+            };
+            names.insert(part.id, name);
+        }
+
         participants
             .iter()
             .map(|p| {
                 let total_minutes = p.calculate_duration(now).as_secs() / 60;
                 let hours = total_minutes / 60;
                 let minutes = total_minutes % 60;
-                format!("- ⏳ `{:>2}:{:02}` {}", hours, minutes, p.identity.name)
+                format!(
+                    "- ⏳ `{:>2}:{:02}` {}",
+                    hours,
+                    minutes,
+                    names.get(&p.id).unwrap()
+                )
             })
             .collect::<Vec<String>>()
             .join("\n")
@@ -145,21 +186,14 @@ impl Reporter {
         let mut visuals = HashMap::new();
         for participant in participants {
             let Ok(visual) = asset_provider
-                .get_members_visual(
-                    guild_id,
-                    participant.identity.user_id,
-                    &participant.identity.face,
-                )
+                .get_members_visual(guild_id, participant.id)
                 .await
             else {
                 // TODO: fallback
-                return Err(format!(
-                    "Cannot fetch member visual: {}",
-                    participant.identity.user_id
-                ));
+                return Err(format!("Cannot fetch member visual: {}", participant.id));
             };
 
-            visuals.insert(participant.identity.user_id, visual);
+            visuals.insert(participant.id, visual);
         }
         Ok(visuals)
     }
@@ -179,7 +213,13 @@ impl Reporter {
 
         let elapsed =
             TimeDelta::from_std(now.mono - snapshot.start.mono).unwrap_or(TimeDelta::zero());
-        let history = Self::format_history(&snapshot.participants, now.mono);
+        let history = Self::format_history(
+            &snapshot.participants,
+            now.mono,
+            snapshot.guild_id,
+            &(Some(&self.cache), self.http.as_ref()),
+        )
+        .await;
         let (title, description, timeline, colour) = if ongoing {
             (
                 format!("## 📢【通話中】{}", snapshot.channel_id.mention()),
@@ -259,42 +299,46 @@ impl Reporter {
         let mut last_snapshot: Option<RoomSnapshot> = None;
 
         loop {
-            tokio::select! {
-                biased;
-
-                res = self.session_event_rx.recv() => {
-                    match res {
-                        Ok(SessionEvent::Updated { room }) => {
-                            last_snapshot = Some(RoomSnapshot::from_lease(room));
-                            scheduler.register_event();
-                        }
-                        Ok(SessionEvent::Shutdown { room, end }) => {
-                            let snapshot = RoomSnapshot::from_lease(room);
-                            if let Err(e) = self.perform_report(&snapshot, end, false).await {
-                                error!("Failed to perform final report: {}", e);
+            tokio_select!(
+                biased,
+                match .. {
+                    .. if let res = self.session_event_rx.recv() => {
+                        match res {
+                            Ok(SessionEvent::Updated { room }) => {
+                                last_snapshot = Some(RoomSnapshot::from_lease(room));
+                                scheduler.register_event();
                             }
-                            break;
-                        }
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            warn!("Reporter lagged behind, skipped {} events. Catching up.", skipped);
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            info!("Session event rx closed, shutdown reporter");
-                            break;
+                            Ok(SessionEvent::Shutdown { room, end }) => {
+                                let snapshot = RoomSnapshot::from_lease(room);
+                                if let Err(e) = self.perform_report(&snapshot, end, false).await {
+                                    error!("Failed to perform final report: {}", e);
+                                }
+                                break;
+                            }
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                warn!(
+                                    "Reporter lagged behind, skipped {} events. Catching up.",
+                                    skipped
+                                );
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                info!("Session event rx closed, shutdown reporter");
+                                break;
+                            }
                         }
                     }
-                }
 
-                _ = tokio::time::sleep_until(scheduler.next_deadline()) => {
-                    if let Some(snapshot) = &last_snapshot {
-                        let now = Moment::now();
-                        if let Err(e) = self.perform_report(snapshot, now, true).await {
-                            error!("Failed to perform regular report: {}", e);
+                    .. if let _ = tokio::time::sleep_until(scheduler.next_deadline()) => {
+                        if let Some(snapshot) = &last_snapshot {
+                            let now = Moment::now();
+                            if let Err(e) = self.perform_report(snapshot, now, true).await {
+                                error!("Failed to perform regular report: {}", e);
+                            }
                         }
+                        scheduler.complete();
                     }
-                    scheduler.complete();
                 }
-            }
+            )
         }
     }
 }

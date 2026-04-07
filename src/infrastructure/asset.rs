@@ -1,15 +1,14 @@
 use image::imageops::FilterType;
-use image::{ImageFormat, ImageReader, imageops};
+use image::{ImageReader, imageops};
 use kmeans_colors::{Kmeans, Sort, get_kmeans};
 use moka::future::Cache;
 use palette::cast::from_component_slice;
 use palette::{FromColor, IntoColor, Lab, Srgba};
-use serenity::all::{GuildId, UserId};
-use std::error::Error;
+use serenity::all::{GuildId, Http, UserId};
 use std::io::{BufReader, Cursor};
 use std::sync::Arc;
 use thiserror::Error;
-use tiny_skia::{Color, Pixmap};
+use tiny_skia::{Color, IntSize, Pixmap};
 
 /// Visual assets and color palette derived from a member's avatar.
 #[derive(Clone)]
@@ -26,17 +25,20 @@ pub struct MemberVisual {
 
 #[derive(Debug, Error)]
 pub enum AssetError {
+    #[error("Serenity request failed: {0}")]
+    Serenity(#[from] serenity::Error),
+
     #[error("Network request failed: {0}")]
     Reqwest(#[from] reqwest::Error),
 
     #[error("Image processing failed: {0}")]
     Image(#[from] image::ImageError),
 
+    #[error("Pixmap construction error")]
+    PixmapConstruction,
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("Failed to decode image: {0}")]
-    PngDecoding(Box<dyn Error + Send + Sync + 'static>),
 
     #[error("Async task join error: {0}")]
     Join(#[from] tokio::task::JoinError),
@@ -49,14 +51,16 @@ pub enum AssetError {
 #[derive(Clone)]
 pub struct AssetProvider {
     client: reqwest::Client,
+    serenity: Arc<Http>,
     cache: Cache<(GuildId, UserId), MemberVisual>,
     avatar_size: u32,
 }
 
 impl AssetProvider {
-    pub fn new(client: reqwest::Client) -> Self {
+    pub fn new(client: reqwest::Client, serenity: Arc<Http>) -> Self {
         Self {
             client,
+            serenity,
             cache: Cache::new(128),
             avatar_size: 64,
         }
@@ -75,12 +79,12 @@ impl AssetProvider {
         &self,
         guild_id: GuildId,
         user_id: UserId,
-        avatar_url: &str,
     ) -> Result<MemberVisual, Arc<AssetError>> {
         let entry = self
             .cache
             .entry((guild_id, user_id))
             .or_try_insert_with::<_, AssetError>(async {
+                let avatar_url = self.serenity.get_member(guild_id, user_id).await?.face();
                 let request = self.client.get(avatar_url).build()?;
 
                 let response = self.client.execute(request).await?;
@@ -129,9 +133,6 @@ impl AssetProvider {
                         }
                     };
 
-                    let mut bytes: Vec<u8> = Vec::new();
-                    avatar_image.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)?;
-
                     let inactive_color = Color::from_rgba(
                         active_color.red(),
                         active_color.green(),
@@ -158,8 +159,11 @@ impl AssetProvider {
                         .unwrap()
                     };
 
-                    let pixmap = Pixmap::decode_png(&bytes)
-                        .map_err(|e| AssetError::PngDecoding(Box::new(e)))?;
+                    let pixmap = Pixmap::from_vec(
+                        avatar_image.into_raw(),
+                        IntSize::from_wh(avatar_size, avatar_size).unwrap(),
+                    )
+                    .ok_or(AssetError::PixmapConstruction)?;
 
                     Ok(MemberVisual {
                         avatar: pixmap,

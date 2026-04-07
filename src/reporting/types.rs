@@ -1,7 +1,7 @@
-use crate::room::{AudioActivity, Interval, Moment, ParticipantLease, RoomLease, UserIdentity};
+use crate::room::{AudioActivity, Interval, Moment, ParticipantLease, RoomLease};
 use serenity::all::{
     ChannelId, CreateAttachment, CreateComponent, CreateMessage, EditAttachments, EditMessage,
-    GuildId, Http, MessageFlags, MessageId,
+    GuildId, Http, MessageFlags, MessageId, UserId,
 };
 use std::borrow::Cow;
 use std::time::Duration;
@@ -38,14 +38,14 @@ pub struct HistorySnapshot {
 
 #[derive(Debug, Clone)]
 pub struct ParticipantSnapshot {
-    pub identity: UserIdentity,
+    pub id: UserId,
     pub history: HistorySnapshot,
 }
 
 impl ParticipantSnapshot {
     fn from_lease(value: ParticipantLease) -> Self {
         Self {
-            identity: value.identity,
+            id: value.id,
             history: HistorySnapshot {
                 audio: value.history.audio.to_vec(),
                 screen_sharing: value.history.screen_sharing.to_vec(),

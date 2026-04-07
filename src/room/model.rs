@@ -1,5 +1,5 @@
 use crate::room::RoomId;
-use crate::room::types::{Moment, ParticipantLease, RoomLease, UserIdentity, VoiceStateFlags};
+use crate::room::types::{Moment, ParticipantLease, RoomLease, VoiceStateFlags};
 use serenity::all::{ChannelId, GuildId, UserId};
 use std::sync::Arc;
 use std::time::Duration;
@@ -51,28 +51,33 @@ impl Room {
         }
     }
 
-    fn find_participant_mut(&mut self, user_id: UserId) -> Option<&mut Participant> {
+    pub fn is_connected(&self, id: UserId) -> bool {
         self.participants
-            .iter_mut()
-            .find(|part| part.identity.user_id == user_id)
+            .iter()
+            .find(|part| part.id == id)
+            .is_some_and(|part| part.is_connected())
+    }
+
+    fn find_participant_mut(&mut self, id: UserId) -> Option<&mut Participant> {
+        self.participants.iter_mut().find(|part| part.id == id)
     }
 
     /// Handles a user connecting to the voice channel.
     pub fn handle_connect(
         &mut self,
         now: Instant,
-        identity: UserIdentity,
+        id: UserId,
         flags: VoiceStateFlags,
     ) -> Result<(), RoomError> {
         debug!("handle connect");
-        if let Some(participant) = self.find_participant_mut(identity.user_id) {
+        if let Some(participant) = self.find_participant_mut(id) {
             debug!("participant already exists");
             participant.connect(now, flags)?;
             return Ok(());
         }
 
         debug!("newly connected, create participant");
-        let mut participant = Participant::new(identity);
+        let mut participant = Participant::new(id);
         participant.connect(now, flags)?;
         self.participants.push(participant);
         Ok(())
@@ -92,14 +97,10 @@ impl Room {
     }
 
     /// Handles a user disconnecting from the voice channel.
-    pub fn handle_disconnect(
-        &mut self,
-        now: Instant,
-        user_id: UserId,
-    ) -> Result<RoomStatus, RoomError> {
+    pub fn handle_disconnect(&mut self, now: Instant, id: UserId) -> Result<RoomStatus, RoomError> {
         debug!("handle disconnect");
         let participant = self
-            .find_participant_mut(user_id)
+            .find_participant_mut(id)
             .ok_or(RoomError::ParticipantNotFound)?;
         participant.disconnect(now)?;
         let status = self.get_status();
@@ -114,12 +115,12 @@ impl Room {
     pub fn handle_update(
         &mut self,
         now: Instant,
-        user_id: UserId,
+        id: UserId,
         flags: VoiceStateFlags,
     ) -> Result<(), RoomError> {
         debug!("handle update");
         let participant = self
-            .find_participant_mut(user_id)
+            .find_participant_mut(id)
             .ok_or(RoomError::ParticipantNotFound)?;
         participant.update(now, flags)?;
         debug!("finish handle update");
@@ -162,14 +163,14 @@ pub enum ParticipantError {
 /// Represents a single user's participation and their activity history in a room.
 #[derive(Debug, Clone)]
 pub struct Participant {
-    pub identity: UserIdentity,
+    pub id: UserId,
     pub history: History,
 }
 
 impl Participant {
-    pub fn new(identity: UserIdentity) -> Self {
+    pub fn new(id: UserId) -> Self {
         Participant {
-            identity,
+            id,
             history: History {
                 audio: Arc::new(Vec::new()),
                 screen_sharing: Arc::new(Vec::new()),
@@ -299,7 +300,7 @@ impl Participant {
 
     pub fn lease(&self) -> ParticipantLease {
         ParticipantLease {
-            identity: self.identity.clone(),
+            id: self.id,
             history: self.history.clone(),
         }
     }

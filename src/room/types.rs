@@ -2,7 +2,6 @@ use crate::room::model::History;
 use chrono::TimeDelta;
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
 use std::fmt::Display;
-use std::sync::Arc;
 use tokio::time::Instant;
 
 #[derive(Copy, Clone, Debug)]
@@ -47,7 +46,7 @@ pub struct RoomLease {
 
 #[derive(Clone)]
 pub struct ParticipantLease {
-    pub identity: UserIdentity,
+    pub id: UserId,
     pub history: History,
 }
 
@@ -77,13 +76,6 @@ impl Moment {
             mono: new_mono,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct UserIdentity {
-    pub user_id: UserId,
-    pub name: Arc<str>,
-    pub face: Arc<str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -5,13 +5,14 @@ use crate::reporting::ReportAnchor;
 use crate::reporting::reporter::Reporter;
 use crate::reporting::subscription::SubscriptionProvider;
 use crate::room::CoordinatorEvent;
-use serenity::all::Http;
+use serenity::all::{Cache, Http};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 
 pub struct Publisher {
     http: Arc<Http>,
+    cache: Arc<Cache>,
     subscription_provider: Arc<dyn SubscriptionProvider>,
     asset_provider: AssetProvider,
     calligraphy: Calligraphy,
@@ -21,12 +22,14 @@ pub struct Publisher {
 impl Publisher {
     pub fn new(
         http: Arc<Http>,
+        cache: Arc<Cache>,
         subscription_provider: Arc<dyn SubscriptionProvider>,
         asset_provider: AssetProvider,
         event_rx: mpsc::UnboundedReceiver<CoordinatorEvent>,
     ) -> Self {
         Self {
             http,
+            cache,
             subscription_provider,
             asset_provider,
             calligraphy: Calligraphy::default(),
@@ -54,6 +57,7 @@ impl Publisher {
                     for subscription in subscriptions {
                         Reporter::spawn(
                             self.http.clone(),
+                            self.cache.clone(),
                             self.asset_provider.clone(),
                             Renderer::new(subscription.layout_config, self.calligraphy.clone()),
                             session_event_rx.resubscribe(),
