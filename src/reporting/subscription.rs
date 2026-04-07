@@ -1,4 +1,5 @@
 use crate::graphics::timeline::layout::LayoutConfig;
+use chrono_tz::Tz;
 use serenity::all::ChannelId;
 use std::collections::HashMap;
 
@@ -6,6 +7,7 @@ use std::collections::HashMap;
 pub struct Subscription {
     pub report_channel: ChannelId,
     pub layout_config: LayoutConfig,
+    pub timezone: Tz,
 }
 
 pub trait SubscriptionProvider: Send + Sync {

@@ -62,6 +62,7 @@ impl Publisher {
                             Renderer::new(subscription.layout_config, self.calligraphy.clone()),
                             session_event_rx.resubscribe(),
                             ReportAnchor::new(subscription.report_channel),
+                            subscription.timezone,
                         );
                     }
                 }

@@ -66,10 +66,9 @@ impl Moment {
     }
 
     pub fn at(&self, new_mono: Instant) -> Self {
-        let wall = self.wall.with_timezone(&chrono::Local);
         let delta = TimeDelta::from_std(new_mono - self.mono).expect("Duration overflow");
 
-        let new_wall = Timestamp::from(wall + delta);
+        let new_wall = Timestamp::from(*self.wall + delta);
 
         Self {
             wall: new_wall,

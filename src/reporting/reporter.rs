@@ -6,6 +6,7 @@ use crate::reporting::{ParticipantSnapshot, ReportAnchor, transformer};
 use crate::room::{Moment, SessionEvent};
 use better_tokio_select::tokio_select;
 use chrono::TimeDelta;
+use chrono_tz::Tz;
 use serenity::all::{
     Cache, CacheHttp, Colour, CreateAttachment, CreateComponent, CreateContainer,
     CreateContainerComponent, CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay,
@@ -58,6 +59,7 @@ pub struct Reporter {
     renderer: timeline::Renderer,
     session_event_rx: broadcast::Receiver<SessionEvent>,
     anchor: ReportAnchor,
+    timezone: Tz,
 }
 
 impl Reporter {
@@ -72,6 +74,7 @@ impl Reporter {
         renderer: timeline::Renderer,
         session_event_rx: broadcast::Receiver<SessionEvent>,
         anchor: ReportAnchor,
+        timezone: Tz,
     ) -> Self {
         Self {
             http,
@@ -80,6 +83,7 @@ impl Reporter {
             renderer,
             session_event_rx,
             anchor,
+            timezone,
         }
     }
 
@@ -90,6 +94,7 @@ impl Reporter {
         renderer: timeline::Renderer,
         session_event_rx: broadcast::Receiver<SessionEvent>,
         anchor: ReportAnchor,
+        timezone: Tz,
     ) {
         let reporter = Self::new(
             http,
@@ -98,6 +103,7 @@ impl Reporter {
             renderer,
             session_event_rx,
             anchor,
+            timezone,
         );
         tokio::spawn(reporter.run());
     }
@@ -237,6 +243,7 @@ impl Reporter {
                     now.mono,
                     snapshot,
                     &visuals,
+                    self.timezone,
                 ),
                 colours::branding::GREEN,
             )
@@ -252,7 +259,14 @@ impl Reporter {
                     FormattedTimestamp::new(now.wall, Some(FormattedTimestampStyle::ShortTime)),
                     Self::format_time_delta(elapsed)
                 ),
-                transform(snapshot.start.mono, now.mono, now.mono, snapshot, &visuals),
+                transform(
+                    snapshot.start.mono,
+                    now.mono,
+                    now.mono,
+                    snapshot,
+                    &visuals,
+                    self.timezone,
+                ),
                 colours::branding::WHITE,
             )
         };
