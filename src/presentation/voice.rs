@@ -68,8 +68,12 @@ impl EventHandler for VoiceHandler {
             }
             FullEvent::VoiceStateUpdate { new, .. } => {
                 let now = Instant::now();
+                let Some(guild_id) = new.guild_id else {
+                    error!("Voice state update has no guild id, just ignore");
+                    return;
+                };
+                
                 if let Some(channel_id) = new.channel_id
-                    && let Some(guild_id) = new.guild_id
                     && self.subscription_provider.has_subscription(channel_id)
                 {
                     if let Err(err) = self.coordinator_handle.track(
@@ -84,6 +88,7 @@ impl EventHandler for VoiceHandler {
                         error!("failed to send message to coordinator: {}", err);
                     }
                 } else if let Err(err) = self.coordinator_handle.notify(
+                    guild_id,
                     new.channel_id,
                     room::VoiceStateUpdate {
                         now,
