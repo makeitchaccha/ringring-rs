@@ -1,3 +1,4 @@
+use crate::room::coordinator::registry::MemberRegistry;
 use crate::room::model::Room;
 use crate::room::session::{
     SessionEvent, SessionHandle, SessionMessage, ShutdownReason, VoiceStateUpdate,
@@ -10,7 +11,6 @@ use std::collections::HashMap;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, warn};
-use crate::room::coordinator::registry::MemberRegistry;
 
 /// A handle to communicate with the [`Coordinator`].
 ///
@@ -261,7 +261,8 @@ impl Coordinator {
                                 guild_id,
                                 message,
                             } => {
-                                if let Some(user_location) = registry.get_channel(guild_id, message.user_id)
+                                if let Some(user_location) =
+                                    registry.get_channel(guild_id, message.user_id)
                                     && user_location != channel_id
                                     && let Some(handle) = self.sessions.get_mut(&user_location)
                                     && let Err(error) = handle.dispatch(
@@ -302,7 +303,8 @@ impl Coordinator {
                                 channel_id,
                                 message,
                             } => {
-                                if let Some(user_location) = registry.get_channel(guild_id, message.user_id)
+                                if let Some(user_location) =
+                                    registry.get_channel(guild_id, message.user_id)
                                     && channel_id
                                         .is_none_or(|channel_id| channel_id != user_location)
                                     && let Some(handle) = self.sessions.get_mut(&user_location)
@@ -359,7 +361,6 @@ fn start_session(
     tx
 }
 
-
 mod registry {
     use super::*;
     pub(super) struct MemberRegistry {
@@ -377,13 +378,18 @@ mod registry {
 
         pub(super) fn unbind(&mut self, guild: GuildId, user: UserId) -> Option<ChannelId> {
             let channel = self.member_channel.remove(&(guild, user))?;
-            let members = self.channel_members.get_mut(&(guild, channel)).expect("must exist");
+            let members = self
+                .channel_members
+                .get_mut(&(guild, channel))
+                .expect("must exist");
 
             if let Some(pos) = members.iter().position(|&m| m == user) {
                 members.swap_remove(pos);
             }
             if members.is_empty() {
-                self.channel_members.remove(&(guild, channel)).expect("must exist");
+                self.channel_members
+                    .remove(&(guild, channel))
+                    .expect("must exist");
             }
 
             Some(channel)
@@ -395,13 +401,20 @@ mod registry {
             }
             self.unbind(guild, user);
             self.member_channel.insert((guild, user), channel);
-            self.channel_members.entry((guild, channel)).or_default().push(user);
+            self.channel_members
+                .entry((guild, channel))
+                .or_default()
+                .push(user);
         }
 
         pub(super) fn drain_channel(&mut self, guild: GuildId, channel: ChannelId) -> Vec<UserId> {
-            let Some(members) = self.channel_members.remove(&(guild, channel)) else { return vec![] };
+            let Some(members) = self.channel_members.remove(&(guild, channel)) else {
+                return vec![];
+            };
             for &user in members.iter() {
-                self.member_channel.remove(&(guild, user)).expect("must exist");
+                self.member_channel
+                    .remove(&(guild, user))
+                    .expect("must exist");
             }
 
             members

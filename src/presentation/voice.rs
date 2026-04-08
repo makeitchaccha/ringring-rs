@@ -72,7 +72,7 @@ impl EventHandler for VoiceHandler {
                     error!("Voice state update has no guild id, just ignore");
                     return;
                 };
-                
+
                 if let Some(channel_id) = new.channel_id
                     && self.subscription_provider.has_subscription(channel_id)
                 {
