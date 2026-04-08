@@ -6,7 +6,7 @@ use crate::room::session::{
 use crate::room::types::Moment;
 use crate::room::{RoomId, RoomIdGenerator, Session};
 use better_tokio_select::tokio_select;
-use serenity::all::{ChannelId, GuildId, Member, UserId};
+use serenity::all::{ChannelId, GuildId, UserId};
 use std::collections::HashMap;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{broadcast, mpsc};
