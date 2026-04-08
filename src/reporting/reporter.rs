@@ -333,7 +333,7 @@ impl Reporter {
                             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                                 // since we usually send PreUpdate and Update sequentially,
                                 // the actual lagged event will be the half of (skipped - 1).
-                                let actual_skipped = (skipped.saturating_sub(1))/2;
+                                let actual_skipped = (skipped.saturating_sub(1)) / 2;
                                 if actual_skipped > 0 {
                                     warn!(
                                         "Reporter lagged behind, skipped {} events. Catching up.",
