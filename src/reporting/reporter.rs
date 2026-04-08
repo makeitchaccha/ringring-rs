@@ -329,6 +329,7 @@ impl Reporter {
                                 }
                                 break;
                             }
+                            Ok(SessionEvent::PreUpdate) => {}
                             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                                 warn!(
                                     "Reporter lagged behind, skipped {} events. Catching up.",
