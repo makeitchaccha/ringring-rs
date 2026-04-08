@@ -1,3 +1,4 @@
+use crate::room::coordinator::registry::MemberRegistry;
 use crate::room::model::Room;
 use crate::room::session::{
     SessionEvent, SessionHandle, SessionMessage, ShutdownReason, VoiceStateUpdate,
@@ -43,10 +44,12 @@ impl CoordinatorHandle {
     /// Notifies a session of an event without creating a new session if it doesn't exist.
     pub fn notify(
         &self,
+        guild_id: GuildId,
         channel_id: Option<ChannelId>,
         message: VoiceStateUpdate,
     ) -> Result<(), SendError<CoordinatorMessage>> {
         self.tx.send(CoordinatorMessage::Notify {
+            guild_id,
             channel_id,
             message,
         })
@@ -70,6 +73,7 @@ pub enum CoordinatorMessage {
     },
     /// Dispatch a message to an existing session.
     Notify {
+        guild_id: GuildId,
         channel_id: Option<ChannelId>,
         message: VoiceStateUpdate,
     },
@@ -163,7 +167,7 @@ impl Coordinator {
         info!("Starting coordinator loop");
 
         let mut id_generator = RoomIdGenerator::new();
-        let mut user_locations: HashMap<UserId, ChannelId> = HashMap::new();
+        let mut registry = MemberRegistry::new();
 
         let (internal_tx, mut internal_rx) = mpsc::unbounded_channel();
 
@@ -230,7 +234,7 @@ impl Coordinator {
                                     }
                                 } else {
                                     self.sessions.remove(&channel_id);
-                                    user_locations.retain(|_, l| *l != channel_id);
+                                    registry.drain_channel(room.guild_id, channel_id);
                                 }
                             }
 
@@ -257,9 +261,10 @@ impl Coordinator {
                                 guild_id,
                                 message,
                             } => {
-                                if let Some(user_location) = user_locations.get(&message.user_id)
-                                    && *user_location != channel_id
-                                    && let Some(handle) = self.sessions.get_mut(user_location)
+                                if let Some(user_location) =
+                                    registry.get_channel(guild_id, message.user_id)
+                                    && user_location != channel_id
+                                    && let Some(handle) = self.sessions.get_mut(&user_location)
                                     && let Err(error) = handle.dispatch(
                                         SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
                                             now: message.now,
@@ -269,7 +274,7 @@ impl Coordinator {
                                     )
                                 {
                                     error!(?error, "could not dispatch message");
-                                    self.sessions.remove(user_location);
+                                    self.sessions.remove(&user_location);
                                 }
 
                                 let handle = self.sessions.entry(channel_id).or_insert_with(|| {
@@ -291,16 +296,18 @@ impl Coordinator {
                                     error!(?error, "could not dispatch message");
                                     self.sessions.remove(&channel_id);
                                 }
-                                user_locations.insert(user_id, channel_id);
+                                registry.bind(guild_id, user_id, channel_id);
                             }
                             CoordinatorMessage::Notify {
+                                guild_id,
                                 channel_id,
                                 message,
                             } => {
-                                if let Some(user_location) = user_locations.get(&message.user_id)
+                                if let Some(user_location) =
+                                    registry.get_channel(guild_id, message.user_id)
                                     && channel_id
-                                        .is_none_or(|channel_id| channel_id != *user_location)
-                                    && let Some(handle) = self.sessions.get_mut(user_location)
+                                        .is_none_or(|channel_id| channel_id != user_location)
+                                    && let Some(handle) = self.sessions.get_mut(&user_location)
                                     && let Err(error) = handle.dispatch(
                                         SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
                                             now: message.now,
@@ -310,8 +317,8 @@ impl Coordinator {
                                     )
                                 {
                                     error!(?error, "could not dispatch message");
-                                    self.sessions.remove(user_location);
-                                    user_locations.remove(&message.user_id);
+                                    self.sessions.remove(&user_location);
+                                    registry.unbind(guild_id, message.user_id);
                                 };
 
                                 let Some(channel_id) = channel_id else {
@@ -331,7 +338,7 @@ impl Coordinator {
                                     error!("could not dispatch message: {}", err);
                                     self.sessions.remove(&channel_id);
                                 }
-                                user_locations.insert(user_id, channel_id);
+                                registry.bind(guild_id, user_id, channel_id);
                             }
                         }
                     }
@@ -352,4 +359,69 @@ fn start_session(
     tokio::spawn(session.run());
 
     tx
+}
+
+mod registry {
+    use super::*;
+    pub(super) struct MemberRegistry {
+        member_channel: HashMap<(GuildId, UserId), ChannelId>,
+        channel_members: HashMap<(GuildId, ChannelId), Vec<UserId>>,
+    }
+
+    impl MemberRegistry {
+        pub(super) fn new() -> Self {
+            Self {
+                member_channel: HashMap::new(),
+                channel_members: HashMap::new(),
+            }
+        }
+
+        pub(super) fn unbind(&mut self, guild: GuildId, user: UserId) -> Option<ChannelId> {
+            let channel = self.member_channel.remove(&(guild, user))?;
+            let members = self
+                .channel_members
+                .get_mut(&(guild, channel))
+                .expect("must exist");
+
+            if let Some(pos) = members.iter().position(|&m| m == user) {
+                members.swap_remove(pos);
+            }
+            if members.is_empty() {
+                self.channel_members
+                    .remove(&(guild, channel))
+                    .expect("must exist");
+            }
+
+            Some(channel)
+        }
+
+        pub(super) fn bind(&mut self, guild: GuildId, user: UserId, channel: ChannelId) {
+            if self.get_channel(guild, user) == Some(channel) {
+                return;
+            }
+            self.unbind(guild, user);
+            self.member_channel.insert((guild, user), channel);
+            self.channel_members
+                .entry((guild, channel))
+                .or_default()
+                .push(user);
+        }
+
+        pub(super) fn drain_channel(&mut self, guild: GuildId, channel: ChannelId) -> Vec<UserId> {
+            let Some(members) = self.channel_members.remove(&(guild, channel)) else {
+                return vec![];
+            };
+            for &user in members.iter() {
+                self.member_channel
+                    .remove(&(guild, user))
+                    .expect("must exist");
+            }
+
+            members
+        }
+
+        pub(super) fn get_channel(&self, guild: GuildId, user: UserId) -> Option<ChannelId> {
+            self.member_channel.get(&(guild, user)).copied()
+        }
+    }
 }
