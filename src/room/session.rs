@@ -120,6 +120,12 @@ pub struct VoiceStateUpdate {
 /// Events emitted by a session to its subscribers (e.g., for reporting).
 #[derive(Clone)]
 pub enum SessionEvent {
+    /// The session will update the internal state.
+    ///
+    /// ## Note
+    /// since channel capacity is supposed to be 1, this will explicitly release
+    /// a room lease contained in [`Updated`](SessionEvent::Updated)
+    PreUpdate,
     /// The session's internal state (room model) has been updated.
     Updated { room: RoomLease },
     /// The session has finished and is now closed.
@@ -174,6 +180,7 @@ impl Session {
                             SessionMessage::VoiceStateUpdate(voice_state_update) => {
                                 let Some(flags) = voice_state_update.flags else {
                                     info!(user_id = %voice_state_update.user_id, "Participant disconnected");
+                                    let _ = self.event_tx.send(SessionEvent::PreUpdate);
                                     let status = match self.room.handle_disconnect(
                                         voice_state_update.now,
                                         voice_state_update.user_id,
@@ -200,6 +207,7 @@ impl Session {
 
                                 if self.room.is_connected(voice_state_update.user_id) {
                                     info!(user_id = %voice_state_update.user_id, flags = ?voice_state_update.flags, "Participant state updated");
+                                    let _ = self.event_tx.send(SessionEvent::PreUpdate);
                                     self.room
                                         .handle_update(
                                             voice_state_update.now,
@@ -212,6 +220,7 @@ impl Session {
                                     });
                                 } else {
                                     info!(user_id = %voice_state_update.user_id, "Participant connected");
+                                    let _ = self.event_tx.send(SessionEvent::PreUpdate);
                                     self.room
                                         .handle_connect(
                                             voice_state_update.now,
