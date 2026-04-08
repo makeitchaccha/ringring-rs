@@ -318,6 +318,7 @@ impl Reporter {
                 match .. {
                     .. if let res = self.session_event_rx.recv() => {
                         match res {
+                            Ok(SessionEvent::PreUpdate) => {}
                             Ok(SessionEvent::Updated { room }) => {
                                 last_snapshot = Some(RoomSnapshot::from_lease(room));
                                 scheduler.register_event();
@@ -329,12 +330,16 @@ impl Reporter {
                                 }
                                 break;
                             }
-                            Ok(SessionEvent::PreUpdate) => {}
                             Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                                warn!(
-                                    "Reporter lagged behind, skipped {} events. Catching up.",
-                                    skipped
-                                );
+                                // since we usually send PreUpdate and Update sequentially,
+                                // the actual lagged event will be the half of (skipped - 1).
+                                let actual_skipped = (skipped.saturating_sub(1))/2;
+                                if actual_skipped > 0 {
+                                    warn!(
+                                        "Reporter lagged behind, skipped {} events. Catching up.",
+                                        skipped
+                                    );
+                                }
                             }
                             Err(broadcast::error::RecvError::Closed) => {
                                 info!("Session event rx closed, shutdown reporter");
