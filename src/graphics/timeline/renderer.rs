@@ -2,6 +2,7 @@ use crate::graphics::timeline::layout::LayoutConfig;
 use crate::graphics::timeline::view::TickKind;
 use crate::graphics::util::{Calligraphy, TextSpec};
 use crate::graphics::{FillStyle, Timeline, TimelineEntry};
+use image::RgbaImage;
 use tiny_skia::{
     Color, FillRule, FilterQuality, LineCap, NonZeroRect, Paint, PathBuilder, Pattern, Pixmap,
     PixmapRef, Point, Rect, Shader, SpreadMode, Stroke, Transform,
@@ -29,12 +30,6 @@ pub struct Renderer {
     calligraphy: Calligraphy,
 }
 
-pub struct RawImage {
-    pub width: u32,
-    pub height: u32,
-    pub data: Vec<u8>,
-}
-
 impl Renderer {
     pub fn new(layout_config: LayoutConfig, calligraphy: Calligraphy) -> Renderer {
         Renderer {
@@ -43,7 +38,7 @@ impl Renderer {
         }
     }
 
-    pub fn generate_raw_image(&self, timeline: Timeline) -> RawImage {
+    pub fn generate_raw_image(&self, timeline: Timeline) -> RgbaImage {
         let n_entries = timeline.entries.len();
         let layout = self.layout_config.calculate(n_entries);
 
@@ -104,11 +99,8 @@ impl Renderer {
 
         pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 
-        RawImage {
-            width: pixmap.width(),
-            height: pixmap.height(),
-            data: pixmap.data().to_vec(),
-        }
+        RgbaImage::from_raw(pixmap.width(), pixmap.height(), pixmap.data().to_vec())
+            .expect("invalid size")
     }
 
     fn draw_avatar(pixmap: &mut Pixmap, avatar: PixmapRef, center: Point, avatar_size: f32) {

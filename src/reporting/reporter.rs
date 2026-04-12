@@ -279,11 +279,8 @@ impl Reporter {
 
         let task: Result<_, anyhow::Error> = tokio::task::spawn_blocking(move || {
             let start = Instant::now();
-            let raw_image = renderer.generate_raw_image(timeline);
+            let img = renderer.generate_raw_image(timeline);
             let end_rendering = Instant::now();
-
-            let img = RgbaImage::from_raw(raw_image.width, raw_image.height, raw_image.data)
-                .context("failed to match")?;
 
             let mut bytes: Vec<u8> = Vec::new();
             img.write_to(&mut Cursor::new(&mut bytes), ImageFormat::WebP)

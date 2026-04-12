@@ -1,4 +1,4 @@
-use image::{ImageFormat, RgbaImage};
+use image::ImageFormat;
 use ringring_rs::graphics::timeline::Renderer;
 use ringring_rs::graphics::timeline::layout::LayoutConfig;
 use ringring_rs::graphics::util::Calligraphy;
@@ -33,10 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }],
     };
 
-    let raw_image = renderer.generate_raw_image(timeline);
+    let img = renderer.generate_raw_image(timeline);
     let file_name = "./timeline.webp".to_string();
-    let img = RgbaImage::from_raw(raw_image.width, raw_image.height, raw_image.data)
-        .expect("malformed image");
 
     img.save_with_format(file_name, ImageFormat::WebP)?;
 

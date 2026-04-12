@@ -113,7 +113,11 @@ pub fn choose_suitable_axis(duration: Duration) -> AxisConfig {
                     .unwrap();
                 }
             }
-            return AxisConfig::with_minor(MajorTickConfig::without_sec(interval), 1).unwrap();
+            return AxisConfig::with_minor(
+                MajorTickConfig::without_sec(interval),
+                divisions_preset.last().cloned().unwrap_or(1),
+            )
+            .unwrap();
         }
     }
 
