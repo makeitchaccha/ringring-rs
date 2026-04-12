@@ -130,7 +130,7 @@ impl Reporter {
             )])
             .accent_color(accent_color),
             footer: CreateTextDisplay::new(format!(
-                "-# ringring-rs v26.4.11 {}\n-# rendering {:.1}ms / encoding {:.1}ms",
+                "-# ringring-rs v26.4.12 {}\n-# rendering {:.1}ms / encoding {:.1}ms",
                 FormattedTimestamp::new(timestamp, Some(FormattedTimestampStyle::RelativeTime)),
                 elapsed.0.as_secs_f64()*1000.0,
                 elapsed.1.as_secs_f64()*1000.0,
