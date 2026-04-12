@@ -4,9 +4,11 @@ use crate::reporting::transformer::transform;
 use crate::reporting::types::RoomSnapshot;
 use crate::reporting::{ParticipantSnapshot, ReportAnchor, transformer};
 use crate::room::{Moment, SessionEvent};
+use anyhow::{Context, anyhow};
 use better_tokio_select::tokio_select;
 use chrono::TimeDelta;
 use chrono_tz::Tz;
+use image::{ImageFormat, RgbaImage};
 use serenity::all::{
     Cache, CacheHttp, Colour, CreateAttachment, CreateComponent, CreateContainer,
     CreateContainerComponent, CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay,
@@ -16,6 +18,7 @@ use serenity::all::{
 use serenity::builder::{CreateMediaGallery, CreateUnfurledMediaItem};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -63,7 +66,7 @@ pub struct Reporter {
 }
 
 impl Reporter {
-    const TIMELINE_IMAGE_FILE: &'static str = "timeline.png";
+    const TIMELINE_IMAGE_FILE: &'static str = "timeline.webp";
     const TIMELINE_IMAGE_URL: &'static str =
         constcat::concat!("attachment://", Reporter::TIMELINE_IMAGE_FILE);
 
@@ -113,7 +116,7 @@ impl Reporter {
         description: &'a str,
         history: &str,
         timestamp: Timestamp,
-        rendering_elapsed: Duration,
+        elapsed: (Duration, Duration),
         accent_color: Colour,
     ) -> Report<'a> {
         Report {
@@ -127,9 +130,10 @@ impl Reporter {
             )])
             .accent_color(accent_color),
             footer: CreateTextDisplay::new(format!(
-                "-# ringring-rs v26.4.11 {}\n-# rendering {}ms",
+                "-# ringring-rs v26.4.12 {}\n-# rendering {:.1}ms / encoding {:.1}ms",
                 FormattedTimestamp::new(timestamp, Some(FormattedTimestampStyle::RelativeTime)),
-                rendering_elapsed.as_millis(),
+                elapsed.0.as_secs_f64() * 1000.0,
+                elapsed.1.as_secs_f64() * 1000.0,
             )),
         }
     }
@@ -188,7 +192,7 @@ impl Reporter {
         asset_provider: &AssetProvider,
         guild_id: GuildId,
         participants: &[ParticipantSnapshot],
-    ) -> Result<HashMap<UserId, MemberVisual>, String> {
+    ) -> anyhow::Result<HashMap<UserId, MemberVisual>> {
         let mut visuals = HashMap::new();
         for participant in participants {
             let Ok(visual) = asset_provider
@@ -196,7 +200,7 @@ impl Reporter {
                 .await
             else {
                 // TODO: fallback
-                return Err(format!("Cannot fetch member visual: {}", participant.id));
+                return Err(anyhow!("Cannot fetch member visual: {}", participant.id));
             };
 
             visuals.insert(participant.id, visual);
@@ -209,7 +213,7 @@ impl Reporter {
         snapshot: &RoomSnapshot,
         now: Moment,
         ongoing: bool,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         let visuals = Self::fetch_member_visuals(
             &self.asset_provider,
             snapshot.guild_id,
@@ -273,22 +277,31 @@ impl Reporter {
 
         let renderer = self.renderer.clone();
 
-        let (task, rendering_elapsed) = tokio::task::spawn_blocking(move || {
+        let task: Result<_, anyhow::Error> = tokio::task::spawn_blocking(move || {
             let start = Instant::now();
-            let res = renderer.generate_png_image(timeline);
-            (res, start.elapsed())
+            let raw_image = renderer.generate_raw_image(timeline);
+            let end_rendering = Instant::now();
+
+            let img = RgbaImage::from_raw(raw_image.width, raw_image.height, raw_image.data)
+                .context("failed to match")?;
+
+            let mut bytes: Vec<u8> = Vec::new();
+            img.write_to(&mut Cursor::new(&mut bytes), ImageFormat::WebP)
+                .context("failed to encode webp image")?;
+            let end_encoding = Instant::now();
+            Ok((bytes, end_rendering - start, end_encoding - end_rendering))
         })
         .await
-        .map_err(|e| format!("failed to spawn blocking task: {}", e))?;
+        .context("failed to spawn blocking task")?;
 
-        let image = task.map_err(|e| format!("failed to generate image: {}", e))?;
+        let (image, rendering_elapsed, encoding_elapsed) = task.context("failed to render")?;
 
         let report = Self::generate_report(
             &title,
             &description,
             &history,
             now.wall,
-            rendering_elapsed,
+            (rendering_elapsed, encoding_elapsed),
             colour,
         );
 
@@ -299,7 +312,7 @@ impl Reporter {
                 CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_FILE),
             )
             .await
-            .map_err(|e| format!("failed to sync anchor: {}", e))?;
+            .context("failed to sync anchor")?;
 
         Ok(())
     }
