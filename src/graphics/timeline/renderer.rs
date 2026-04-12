@@ -29,6 +29,12 @@ pub struct Renderer {
     calligraphy: Calligraphy,
 }
 
+pub struct RawImage {
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<u8>,
+}
+
 impl Renderer {
     pub fn new(layout_config: LayoutConfig, calligraphy: Calligraphy) -> Renderer {
         Renderer {
@@ -37,7 +43,7 @@ impl Renderer {
         }
     }
 
-    pub fn generate_png_image(&self, timeline: Timeline) -> Result<Vec<u8>, &'static str> {
+    pub fn generate_raw_image(&self, timeline: Timeline) -> RawImage {
         let n_entries = timeline.entries.len();
         let layout = self.layout_config.calculate(n_entries);
 
@@ -98,9 +104,11 @@ impl Renderer {
 
         pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
 
-        let image = pixmap.encode_png().map_err(|_e| "failed to encode image")?;
-
-        Ok(image)
+        RawImage {
+            width: pixmap.width(),
+            height: pixmap.height(),
+            data: pixmap.data().to_vec(),
+        }
     }
 
     fn draw_avatar(pixmap: &mut Pixmap, avatar: PixmapRef, center: Point, avatar_size: f32) {
