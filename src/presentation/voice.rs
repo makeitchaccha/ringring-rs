@@ -1,26 +1,17 @@
-use crate::reporting::subscription::SubscriptionProvider;
 use crate::room;
 use crate::room::CoordinatorHandle;
 use serenity::all::{Context, EventHandler, FullEvent};
 use serenity::async_trait;
-use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::{debug, error};
 
 pub struct VoiceHandler {
-    subscription_provider: Arc<dyn SubscriptionProvider>,
     coordinator_handle: CoordinatorHandle,
 }
 
 impl VoiceHandler {
-    pub fn new(
-        subscription_provider: Arc<dyn SubscriptionProvider>,
-        coordinator_handle: CoordinatorHandle,
-    ) -> Self {
-        Self {
-            subscription_provider,
-            coordinator_handle,
-        }
+    pub fn new(coordinator_handle: CoordinatorHandle) -> Self {
+        Self { coordinator_handle }
     }
 }
 
@@ -39,9 +30,7 @@ impl EventHandler for VoiceHandler {
                     };
 
                     for voice_state in guild_ref.voice_states.iter() {
-                        if !voice_state.channel_id.is_some_and(|channel_id| {
-                            self.subscription_provider.has_subscription(channel_id)
-                        }) {
+                        if voice_state.channel_id.is_none() {
                             continue;
                         }
                         let mut voice_state = voice_state.clone();
@@ -73,9 +62,7 @@ impl EventHandler for VoiceHandler {
                     return;
                 };
 
-                if let Some(channel_id) = new.channel_id
-                    && self.subscription_provider.has_subscription(channel_id)
-                {
+                if let Some(channel_id) = new.channel_id {
                     if let Err(err) = self.coordinator_handle.track(
                         channel_id,
                         guild_id,

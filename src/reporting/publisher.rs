@@ -8,7 +8,7 @@ use crate::room::CoordinatorEvent;
 use serenity::all::{Cache, Http};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::debug;
 
 pub struct Publisher {
     http: Arc<Http>,
@@ -47,7 +47,7 @@ impl Publisher {
                     let subscriptions = self.subscription_provider.find_subscriptions(channel_id);
 
                     if subscriptions.is_empty() {
-                        warn!(
+                        debug!(
                             "Session pushed event but no valid subscription was found for channel: {}",
                             channel_id
                         );

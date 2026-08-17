@@ -67,10 +67,7 @@ async fn main() {
 
     // 5. Build Serenity Client
     let mut client = Client::builder(config.discord.token, intents)
-        .event_handler(Arc::new(VoiceHandler::new(
-            subscription_provider.clone(),
-            coordinator_handle,
-        )))
+        .event_handler(Arc::new(VoiceHandler::new(coordinator_handle)))
         .await
         .expect("Err creating client");
 
