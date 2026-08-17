@@ -8,7 +8,7 @@ use anyhow::{Context, anyhow};
 use better_tokio_select::tokio_select;
 use chrono::TimeDelta;
 use chrono_tz::Tz;
-use image::{ImageFormat, RgbaImage};
+use image::ImageFormat;
 use serenity::all::{
     Cache, CacheHttp, Colour, CreateAttachment, CreateComponent, CreateContainer,
     CreateContainerComponent, CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay,

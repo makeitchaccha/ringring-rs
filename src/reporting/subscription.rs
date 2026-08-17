@@ -11,10 +11,6 @@ pub struct Subscription {
 }
 
 pub trait SubscriptionProvider: Send + Sync {
-    fn has_subscription(&self, channel: ChannelId) -> bool {
-        !self.find_subscriptions(channel).is_empty()
-    }
-
     fn find_subscriptions(&self, voice_channel: ChannelId) -> Vec<Subscription>;
 }
 
