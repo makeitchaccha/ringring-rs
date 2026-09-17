@@ -1,10 +1,13 @@
 {
-  description = "Rust development environment";
+  description = "ringring-rs";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    crane.url = "github:ipetkov/crane";
+  };
 
   outputs =
-    { nixpkgs, ... }:
+    { nixpkgs, crane, ... }:
     let
       systems = [
         "x86_64-linux"
@@ -29,6 +32,32 @@
               rustfmt
               rust-analyzer
             ];
+          };
+        }
+      );
+
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          craneLib = crane.mkLib pkgs;
+          ringring-rs = import ./nix/package.nix {
+            inherit craneLib;
+            inherit (pkgs) fontconfig freetype pkg-config;
+          };
+        in
+        {
+          default = ringring-rs;
+        }
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          dockerImage = import ./nix/image.nix {
+            package = ringring-rs;
+            inherit (pkgs)
+              cacert
+              dejavu_fonts
+              dockerTools
+              fontconfig
+              ;
           };
         }
       );
