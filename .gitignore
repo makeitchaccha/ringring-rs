@@ -10,3 +10,6 @@ target/
 # Config
 config.toml
 docker-compose.yml
+
+# Nix
+.direnv/
