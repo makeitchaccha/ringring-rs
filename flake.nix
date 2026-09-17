@@ -40,25 +40,34 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          craneLib = crane.mkLib pkgs;
-          ringring-rs = import ./nix/package.nix {
-            inherit craneLib;
-            inherit (pkgs) fontconfig freetype pkg-config;
-          };
+          mkPackage =
+            packageSet:
+            import ./nix/package.nix {
+              craneLib = crane.mkLib packageSet;
+            };
+          muslPkgs =
+            if system == "x86_64-linux" then
+              pkgs.pkgsCross.musl64
+            else if system == "aarch64-linux" then
+              pkgs.pkgsCross.aarch64-multiplatform-musl
+            else
+              null;
+          ringring-rs = mkPackage pkgs;
+          ringring-rs-musl = if muslPkgs == null then null else mkPackage muslPkgs;
+          mkImage =
+            package:
+            import ./nix/image.nix {
+              inherit package;
+              inherit (pkgs) cacert dejavu_fonts dockerTools;
+            };
         in
         {
           default = ringring-rs;
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          dockerImage = import ./nix/image.nix {
-            package = ringring-rs;
-            inherit (pkgs)
-              cacert
-              dejavu_fonts
-              dockerTools
-              fontconfig
-              ;
-          };
+          musl = ringring-rs-musl;
+          dockerImage = mkImage ringring-rs;
+          dockerImageMusl = mkImage ringring-rs-musl;
         }
       );
     };

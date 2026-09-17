@@ -2,7 +2,6 @@
   cacert,
   dejavu_fonts,
   dockerTools,
-  fontconfig,
   package,
 }:
 
@@ -13,13 +12,20 @@ dockerTools.buildLayeredImage {
     mkdir -p ./app ./etc ./home/nonroot
     echo 'nonroot:x:1000:1000:nonroot:/home/nonroot:/sbin/nologin' > ./etc/passwd
     echo 'nonroot:x:1000:' > ./etc/group
+    mkdir -p ./etc/fonts
+    cat > ./etc/fonts/fonts.conf <<'EOF'
+    <?xml version="1.0"?>
+    <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+    <fontconfig>
+      <dir>/share/fonts</dir>
+    </fontconfig>
+    EOF
     chown -R 1000:1000 ./app ./home/nonroot
   '';
   contents = [
     package
     cacert
     dejavu_fonts
-    fontconfig
   ];
   config = {
     Entrypoint = [ "${package}/bin/ringring-rs" ];

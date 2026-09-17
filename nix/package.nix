@@ -1,9 +1,4 @@
-{
-  craneLib,
-  fontconfig,
-  freetype,
-  pkg-config,
-}:
+{ craneLib }:
 
 let
   cargoToml = builtins.fromTOML (builtins.readFile ../Cargo.toml);
@@ -14,10 +9,4 @@ craneLib.buildPackage {
   src = craneLib.cleanCargoSource ../.;
   strictDeps = true;
   cargoExtraArgs = "--bin ringring-rs";
-
-  nativeBuildInputs = [ pkg-config ];
-  buildInputs = [
-    fontconfig
-    freetype
-  ];
 }
