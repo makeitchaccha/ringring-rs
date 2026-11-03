@@ -219,7 +219,7 @@ impl Session {
                                     };
                                     if status == RoomStatus::Empty {
                                         info!("Room is now empty, starting idle countdown");
-                                        idle.start_countdown();
+                                        idle.start_countdown(voice_state_update.now);
                                     }
                                     let _ = self.event_tx.send(SessionEvent::Updated {
                                         room: self.room.lease(),
@@ -315,7 +315,7 @@ impl Session {
                         }
                     } => {
                         if idle.deadline().is_some() {
-                            let start = idle.fire();
+                            let start = idle.fire(Instant::now());
                             info!(idle_since = ?start, "Detected idle, starting idle-shutdown sequence...");
                             if let Err(err) = self.coordinator_tx.send(
                                 CoordinatorInternalMessage::Idle {
@@ -462,8 +462,7 @@ impl IdleTracker {
         }
     }
 
-    fn start_countdown(&mut self) {
-        let now = Instant::now();
+    fn start_countdown(&mut self, now: Instant) {
         self.start = Some(now);
         self.deadline = Some(now + Self::TIMEOUT);
         self.notified = false;
@@ -488,10 +487,147 @@ impl IdleTracker {
     }
 
     /// Marks the countdown as fired: records the start time and clears the deadline.
-    fn fire(&mut self) -> Instant {
-        let start = self.start.take().unwrap_or_else(Instant::now);
+    fn fire(&mut self, now: Instant) -> Instant {
+        let start = self.start.take().unwrap_or(now);
         self.notified = true;
         self.deadline = None;
         start
+    }
+}
+
+#[cfg(test)]
+mod session_handle_tests {
+    use super::*;
+    use serenity::all::UserId;
+    use tokio::sync::mpsc;
+
+    fn make_handle() -> (SessionHandle, mpsc::UnboundedReceiver<SessionMessage>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (SessionHandle::new(tx), rx)
+    }
+
+    #[test]
+    fn dispatch_sends_when_not_suspended() {
+        let (mut handle, mut rx) = make_handle();
+        handle.dispatch(SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+            now: tokio::time::Instant::now(),
+            user_id: UserId::new(1),
+            flags: None,
+        })).unwrap();
+        assert!(rx.try_recv().is_ok(), "message should be delivered immediately");
+    }
+
+    #[test]
+    fn dispatch_buffers_when_suspended() {
+        let (mut handle, mut rx) = make_handle();
+        handle.suspend_delivery();
+        handle.dispatch(SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+            now: tokio::time::Instant::now(),
+            user_id: UserId::new(1),
+            flags: None,
+        })).unwrap();
+        assert!(rx.try_recv().is_err(), "message should be buffered, not delivered");
+        assert!(handle.has_waiting_events());
+    }
+
+    #[test]
+    fn resume_flushes_buffered_messages() {
+        let (mut handle, mut rx) = make_handle();
+        handle.suspend_delivery();
+        handle.dispatch(SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+            now: tokio::time::Instant::now(),
+            user_id: UserId::new(1),
+            flags: None,
+        })).unwrap();
+        handle.resume_delivery().unwrap();
+        assert!(rx.try_recv().is_ok(), "buffered message should be flushed");
+        assert!(!handle.has_waiting_events());
+    }
+
+    #[test]
+    fn force_dispatch_bypasses_suspension() {
+        let (mut handle, mut rx) = make_handle();
+        handle.suspend_delivery();
+        handle.force_dispatch(SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+            now: tokio::time::Instant::now(),
+            user_id: UserId::new(1),
+            flags: None,
+        })).unwrap();
+        assert!(rx.try_recv().is_ok(), "force_dispatch should bypass buffer");
+    }
+
+    #[test]
+    fn reconnect_retakes_tx() {
+        let (mut handle, _rx) = make_handle();
+        let (new_tx, mut new_rx) = mpsc::unbounded_channel();
+        handle.reconnect(new_tx);
+        handle.dispatch(SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+            now: tokio::time::Instant::now(),
+            user_id: UserId::new(1),
+            flags: None,
+        })).unwrap();
+        assert!(new_rx.try_recv().is_ok(), "after reconnect, messages go to new tx");
+    }
+
+    #[test]
+    fn is_suspended_reflects_state() {
+        let (mut handle, _rx) = make_handle();
+        assert!(!handle.is_suspended());
+        handle.suspend_delivery();
+        assert!(handle.is_suspended());
+        handle.resume_delivery().unwrap();
+        assert!(!handle.is_suspended());
+    }
+}
+
+#[cfg(test)]
+mod idle_tracker_tests {
+    use super::*;
+    use tokio::time::Instant;
+
+    #[test]
+    fn start_countdown_sets_deadline() {
+        let mut tracker = IdleTracker::new();
+        let now = Instant::now();
+        tracker.start_countdown(now);
+        assert!(tracker.deadline().is_some());
+        assert!(!tracker.has_expired());
+    }
+
+    #[test]
+    fn abort_clears_state() {
+        let mut tracker = IdleTracker::new();
+        tracker.start_countdown(Instant::now());
+        tracker.abort();
+        assert!(tracker.deadline().is_none());
+        assert!(!tracker.has_expired());
+    }
+
+    #[test]
+    fn fire_sets_notified() {
+        let mut tracker = IdleTracker::new();
+        let now = Instant::now();
+        tracker.start_countdown(now);
+        let start = tracker.fire(now);
+        assert!(tracker.has_expired());
+        assert!(tracker.deadline().is_none());
+        assert_eq!(start, now);
+    }
+
+    #[test]
+    fn fire_uses_fallback_when_start_is_none() {
+        let mut tracker = IdleTracker::new();
+        let now = Instant::now();
+        let start = tracker.fire(now);
+        assert_eq!(start, now);
+        assert!(tracker.has_expired());
+    }
+
+    #[test]
+    fn deadline_returns_none_after_fire() {
+        let mut tracker = IdleTracker::new();
+        tracker.start_countdown(Instant::now());
+        tracker.fire(Instant::now());
+        assert!(tracker.deadline().is_none());
     }
 }

@@ -439,6 +439,87 @@ mod coordinator_smoke_tests {
 }
 
 mod registry {
+    #[cfg(test)]
+    mod registry_tests {
+        use super::*;
+        use serenity::all::{ChannelId, GuildId, UserId};
+
+        #[test]
+        fn bind_and_get_channel() {
+            let mut reg = MemberRegistry::new();
+            let guild = GuildId::new(1);
+            let user = UserId::new(10);
+            let ch = ChannelId::new(100);
+            reg.bind(guild, user, ch);
+            assert_eq!(reg.get_channel(guild, user), Some(ch));
+        }
+
+        #[test]
+        fn bind_moves_user_to_new_channel() {
+            let mut reg = MemberRegistry::new();
+            let guild = GuildId::new(1);
+            let user = UserId::new(10);
+            let ch1 = ChannelId::new(100);
+            let ch2 = ChannelId::new(200);
+            reg.bind(guild, user, ch1);
+            reg.bind(guild, user, ch2);
+            assert_eq!(reg.get_channel(guild, user), Some(ch2));
+            // old channel should have no members
+            assert!(reg.drain_channel(guild, ch1).is_empty());
+        }
+
+        #[test]
+        fn unbind_removes_user() {
+            let mut reg = MemberRegistry::new();
+            let guild = GuildId::new(1);
+            let user = UserId::new(10);
+            let ch = ChannelId::new(100);
+            reg.bind(guild, user, ch);
+            let removed = reg.unbind(guild, user);
+            assert_eq!(removed, Some(ch));
+            assert_eq!(reg.get_channel(guild, user), None);
+        }
+
+        #[test]
+        fn unbind_unknown_user_returns_none() {
+            let mut reg = MemberRegistry::new();
+            let result = reg.unbind(GuildId::new(1), UserId::new(99));
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn drain_channel_removes_all_members() {
+            let mut reg = MemberRegistry::new();
+            let guild = GuildId::new(1);
+            let ch = ChannelId::new(100);
+            reg.bind(guild, UserId::new(1), ch);
+            reg.bind(guild, UserId::new(2), ch);
+            let drained = reg.drain_channel(guild, ch);
+            assert_eq!(drained.len(), 2);
+            assert_eq!(reg.get_channel(guild, UserId::new(1)), None);
+            assert_eq!(reg.get_channel(guild, UserId::new(2)), None);
+        }
+
+        #[test]
+        fn drain_unknown_channel_returns_empty() {
+            let drained = MemberRegistry::new().drain_channel(GuildId::new(1), ChannelId::new(999));
+            assert!(drained.is_empty());
+        }
+
+        #[test]
+        fn bind_same_channel_is_noop() {
+            let mut reg = MemberRegistry::new();
+            let guild = GuildId::new(1);
+            let user = UserId::new(10);
+            let ch = ChannelId::new(100);
+            reg.bind(guild, user, ch);
+            reg.bind(guild, user, ch); // should not duplicate
+            // drain should return exactly 1 member
+            let drained = reg.drain_channel(guild, ch);
+            assert_eq!(drained.len(), 1);
+        }
+    }
+
     use super::*;
     pub(super) struct MemberRegistry {
         member_channel: HashMap<(GuildId, UserId), ChannelId>,
