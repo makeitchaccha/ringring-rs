@@ -130,6 +130,10 @@ impl Coordinator {
     }
 
     pub fn spawn() -> (CoordinatorHandle, mpsc::UnboundedReceiver<CoordinatorEvent>) {
+        // Unbounded channels are used intentionally: the message rate is bounded
+        // by Discord's gateway rate limits (VOICE_STATE_UPDATE), so backpressure
+        // is not a concern in practice.  Bounded channels would risk dropping
+        // events under burst load with no recovery path.
         let (tx, rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let coordinator = Self::new(rx, event_tx);
@@ -370,6 +374,7 @@ fn start_session(
     internal_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
     event_tx: broadcast::Sender<SessionEvent>,
 ) -> mpsc::UnboundedSender<SessionMessage> {
+    // Unbounded: message rate is bounded by Discord's gateway rate limits.
     let (tx, rx) = mpsc::unbounded_channel();
     let session = Session::new(room, rx, internal_tx, event_tx);
 
