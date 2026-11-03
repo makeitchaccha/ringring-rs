@@ -119,13 +119,37 @@ pub struct VoiceStateUpdate {
 /// Events emitted by a session to its subscribers (e.g., for reporting).
 #[derive(Clone)]
 pub enum SessionEvent {
-    /// The session will update the internal state.
+    /// The session is about to update its internal state.
     ///
-    /// ## Note
-    /// since channel capacity is supposed to be 1, this will explicitly release
-    /// a room lease contained in [`Updated`](SessionEvent::Updated)
+    /// # Copy-on-Write optimization
+    ///
+    /// `Room` stores activity history behind `Arc<Vec<...>>`.  When a reporter
+    /// is slow, the previous [`Updated`](SessionEvent::Updated) message (which
+    /// carries a `RoomLease` with an `Arc` clone) may still sit in the
+    /// broadcast channel's internal buffer.  While that `Arc` is alive, the
+    /// Room task's `Arc::make_mut` must clone the whole vector on every
+    /// update — O(n) instead of O(1).
+    ///
+    /// `PreUpdate` is sent **before** the state mutation.  Because the
+    /// broadcast channel has capacity 1, sending `PreUpdate` (which carries no
+    /// `Arc`) pushes the previous `Updated` out of the buffer, dropping its
+    /// `Arc` reference.  By the time the Room task mutates, the `Arc`'s
+    /// strong count is 1 and `make_mut` works in place.
+    ///
+    /// The Reporter does not need to handle `PreUpdate` explicitly — the
+    /// buffer eviction happens automatically when the message is sent.
+    ///
+    /// # Secondary use: Lag detection
+    ///
+    /// `PreUpdate` and `Updated` are sent as a pair.  When the Reporter
+    /// lags, the broadcast channel reports `Lagged(n)`; dividing by 2
+    /// (`(n - 1) / 2`) estimates how many update pairs were skipped.
     PreUpdate,
     /// The session's internal state (room model) has been updated.
+    ///
+    /// Carries a [`RoomLease`] whose history vectors are behind `Arc`.  The
+    /// Reporter should convert to owned data (`RoomSnapshot`) promptly so the
+    /// `Arc` reference is released and the Room task can mutate in place.
     Updated { room: RoomLease },
     /// The session has finished and is now closed.
     Shutdown { room: RoomLease, end: Moment },

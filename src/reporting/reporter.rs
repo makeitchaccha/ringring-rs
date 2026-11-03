@@ -332,7 +332,14 @@ impl Reporter {
                 match .. {
                     .. if let res = self.session_event_rx.recv() => {
                         match res {
-                            Ok(SessionEvent::PreUpdate) => {}
+                            Ok(SessionEvent::PreUpdate) => {
+                                // No-op: the broadcast buffer has already evicted
+                                // the previous Updated's Arc reference when PreUpdate
+                                // was sent.  The Room task's Arc::make_mut can now
+                                // mutate in place.  We do not hold an Arc here
+                                // (RoomSnapshot owns its Vecs), so there is
+                                // nothing to drop.
+                            }
                             Ok(SessionEvent::Updated { room }) => {
                                 last_snapshot = Some(RoomSnapshot::from_lease(room));
                                 scheduler.register_event();

@@ -147,6 +147,36 @@ impl Room {
     /// This is used to share the room's state with other tasks (like the reporter)
     /// without locking the main room instance.
     ///
+    /// ### Copy-on-Write design
+    ///
+    /// `History` stores its activity vectors behind `Arc<Vec<...>>`.  `lease()`
+    /// only bumps the reference count (O(1)) instead of deep-cloning the data.
+    ///
+    /// - **Read path (lease)**: `Arc::clone` — O(1), no data copy.
+    /// - **Write path (update)**: `Arc::make_mut` — O(1) when no lease is held
+    ///   (in-place mutation), O(n) only while a lease keeps the refcount > 1.
+    ///
+    /// The `Arc` reference is kept low by two mechanisms:
+    /// 1. The Reporter converts `RoomLease` to `RoomSnapshot` (owned `Vec`)
+    ///    promptly, dropping the `Arc`.
+    /// 2. `Session` sends [`SessionEvent::PreUpdate`] before mutating, which
+    ///    evicts the previous `Updated` from the broadcast buffer (capacity 1),
+    ///    dropping its `Arc` reference before `Arc::make_mut` is called.
+    ///
+    /// Why not `Mutex<Vec>`?
+    /// - The Room task and the Reporter task would contend on the same lock.
+    /// - `std::sync::Mutex` risks deadlock in async; `tokio::sync::Mutex` adds
+    ///   await overhead on every access.
+    ///
+    /// Why not deep-clone on every lease?
+    /// - With 10 participants × 1000 events, each 5–15 s lease would copy
+    ///   10 000 elements. CoW defers that cost to the rare case where a lease
+    ///   is actually held during an update.
+    ///
+    /// Why not an immutable data structure (`im` crate)?
+    /// - Adds a dependency for functionality already provided by `Arc<Vec>`
+    ///   with standard-library-only code.
+    ///
     /// ### Performance Note
     /// The recipient should drop the returned lease as soon as possible.
     /// Holding onto it keeps the reference count of the internal activity history high,
@@ -313,6 +343,10 @@ impl Participant {
         Ok(())
     }
 
+    /// Creates a thread-safe snapshot of this participant's history.
+    ///
+    /// Only bumps the `Arc` reference count (O(1)); the underlying vectors are
+    /// shared until the main task mutates them via `Arc::make_mut`.
     pub fn lease(&self) -> ParticipantLease {
         ParticipantLease {
             id: self.id,
@@ -321,7 +355,11 @@ impl Participant {
     }
 }
 
-/// The activity history of a participant, stored efficiently using `Arc` for sharing.
+/// The activity history of a participant, stored behind `Arc` for Copy-on-Write sharing.
+///
+/// Updates use `Arc::make_mut` so that the vector is mutated in place when no
+/// lease is held, and cloned only when a reporter is concurrently reading.
+/// See [`Room::lease`] for the full rationale.
 #[derive(Debug, Clone)]
 pub struct History {
     /// Audio activities, including mute and deafen states.

@@ -146,6 +146,11 @@ impl Coordinator {
         channel_id: ChannelId,
         internal_tx: &mpsc::UnboundedSender<CoordinatorInternalMessage>,
     ) -> mpsc::UnboundedSender<SessionMessage> {
+        // Capacity 1 is intentional: it ensures that only the latest message
+        // is buffered.  When a new message (PreUpdate or Updated) is sent, the
+        // previous one is evicted, dropping any Arc reference it carried.
+        // This is the mechanism behind the Copy-on-Write optimization —
+        // see [`SessionEvent::PreUpdate`] for details.
         let (session_event_tx, session_event_rx) = broadcast::channel(1);
         let room = Room::new(id, guild_id, channel_id, Moment::now());
         let tx = start_session(room, internal_tx.clone(), session_event_tx);
