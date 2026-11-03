@@ -31,6 +31,10 @@ impl AxisConfig {
     }
 
     pub fn generate_tick(&self, start: NaiveDateTime, end: NaiveDateTime) -> Vec<Tick> {
+        if end <= start {
+            return Vec::new();
+        }
+
         let step = TimeDelta::from_std(self.major.interval).unwrap();
         let divisions = self.minor_divisions.unwrap_or(1) as i32;
 

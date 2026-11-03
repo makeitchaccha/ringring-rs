@@ -130,7 +130,11 @@ fn convert_to_voice_sections<'a>(
     end: Instant,
     history: impl IntoIterator<Item = &'a AudioActivity>,
 ) -> Vec<VoiceSection> {
-    let duration_sec = (end - start).as_secs_f32();
+    let duration = end - start;
+    if duration.is_zero() {
+        return Vec::new();
+    }
+    let duration_sec = duration.as_secs_f32();
 
     history
         .into_iter()
@@ -155,7 +159,11 @@ fn convert_to_streaming_sections<'a>(
     end: Instant,
     activities: impl IntoIterator<Item = &'a Interval>,
 ) -> Vec<StreamingSection> {
-    let duration_sec = (end - start).as_secs_f32();
+    let duration = end - start;
+    if duration.is_zero() {
+        return Vec::new();
+    }
+    let duration_sec = duration.as_secs_f32();
 
     activities
         .into_iter()
