@@ -205,15 +205,7 @@ impl Reporter {
                         error = %error,
                         "Failed to fetch member visual, using fallback"
                     );
-                    visuals.insert(
-                        participant.id,
-                        MemberVisual {
-                            avatar: tiny_skia::Pixmap::new(1, 1).unwrap(),
-                            active_color: tiny_skia::Color::BLACK,
-                            inactive_color: tiny_skia::Color::BLACK,
-                            streaming_color: tiny_skia::Color::BLACK,
-                        },
-                    );
+                    visuals.insert(participant.id, MemberVisual::fallback(participant.id));
                 }
             }
         }

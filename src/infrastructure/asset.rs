@@ -23,6 +23,67 @@ pub struct MemberVisual {
     pub streaming_color: Color,
 }
 
+impl MemberVisual {
+    /// Builds a fallback visual for a member whose avatar could not be fetched.
+    ///
+    /// The active color is chosen deterministically from a palette of colors
+    /// whose Lab lightness stays within the same (20, 90) range used by the
+    /// real extraction, so the fallback follows the same color rules.
+    pub fn fallback(user_id: UserId) -> Self {
+        const PALETTE: [(u8, u8, u8); 8] = [
+            (200, 50, 50),
+            (50, 180, 50),
+            (50, 50, 200),
+            (220, 140, 30),
+            (140, 50, 200),
+            (30, 180, 180),
+            (220, 80, 150),
+            (220, 200, 50),
+        ];
+
+        let (r, g, b) = PALETTE[(user_id.get() as usize) % PALETTE.len()];
+        let active_color =
+            Color::from_rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0).unwrap();
+
+        let inactive_color = Color::from_rgba(
+            active_color.red(),
+            active_color.green(),
+            active_color.blue(),
+            active_color.alpha() * 0.35,
+        )
+        .unwrap();
+
+        let streaming_color = {
+            let mut lab_color: Lab = Srgba::new(
+                active_color.red(),
+                active_color.green(),
+                active_color.blue(),
+                active_color.alpha(),
+            )
+            .into_color();
+            lab_color.l *= 0.4;
+            let rgba_color = Srgba::from_color(lab_color);
+            Color::from_rgba(
+                rgba_color.red,
+                rgba_color.green,
+                rgba_color.blue,
+                rgba_color.alpha,
+            )
+            .unwrap()
+        };
+
+        let mut avatar = Pixmap::new(1, 1).unwrap();
+        avatar.fill(active_color);
+
+        Self {
+            avatar,
+            active_color,
+            inactive_color,
+            streaming_color,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AssetError {
     #[error("Serenity request failed: {0}")]
