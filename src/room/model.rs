@@ -460,8 +460,14 @@ impl Interval {
 #[cfg(test)]
 mod cow_tests {
     use super::*;
-    use serenity::all::UserId;
+    use serenity::all::{ChannelId, GuildId, UserId};
     use tokio::time::Instant;
+
+    fn make_room() -> Room {
+        use crate::room::RoomIdGenerator;
+        let mut id_gen = RoomIdGenerator::new();
+        Room::new(id_gen.next_id(), GuildId::new(1), ChannelId::new(2), Moment::now())
+    }
 
     fn make_participant() -> Participant {
         let mut p = Participant::new(UserId::new(1));
@@ -511,11 +517,11 @@ mod cow_tests {
     }
 
     #[test]
-    fn update_audio_no_lease_does_not_clone() {
+    fn update_audio_same_state_no_lease_does_not_clone() {
         let mut p = make_participant();
         let ptr_before = Arc::as_ptr(&p.history.audio);
 
-        // Update with same state, no lease held
+        // Update with same state, no lease held (no-op)
         p.update(Instant::now(), VoiceStateFlags {
             is_muted: false,
             is_deafened: false,
@@ -524,6 +530,133 @@ mod cow_tests {
 
         let ptr_after = Arc::as_ptr(&p.history.audio);
         assert_eq!(ptr_before, ptr_after, "no-op without lease should not clone (in-place)");
+    }
+
+    #[test]
+    fn update_audio_state_change_no_lease_does_not_clone() {
+        let mut p = make_participant();
+        let ptr_before = Arc::as_ptr(&p.history.audio);
+
+        // Update with different state, no lease held (state change)
+        p.update(Instant::now(), VoiceStateFlags {
+            is_muted: true,
+            is_deafened: false,
+            is_sharing_screen: false,
+        }).unwrap();
+
+        let ptr_after = Arc::as_ptr(&p.history.audio);
+        assert_eq!(ptr_before, ptr_after, "state change without lease should be in-place (no clone)");
+    }
+
+    #[test]
+    fn connect_returns_invalid_state_when_already_connected() {
+        let mut p = make_participant();
+        let result = p.connect(Instant::now(), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        assert!(matches!(result, Err(ParticipantError::InvalidState)),
+            "connecting an already-connected participant should fail");
+    }
+
+    #[test]
+    fn update_returns_invalid_state_when_not_connected() {
+        let p_id = UserId::new(1);
+        let mut p = Participant::new(p_id);
+        // Not connected yet
+        let result = p.update(Instant::now(), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        assert!(matches!(result, Err(ParticipantError::InvalidState)),
+            "updating a non-connected participant should fail");
+    }
+
+    #[test]
+    fn disconnect_returns_invalid_state_when_not_connected() {
+        let p_id = UserId::new(1);
+        let mut p = Participant::new(p_id);
+        let result = p.disconnect(Instant::now());
+        assert!(matches!(result, Err(ParticipantError::InvalidState)),
+            "disconnecting a non-connected participant should fail");
+    }
+
+    #[test]
+    fn screen_sharing_start_stop_splits_interval() {
+        let mut room = make_room();
+        let now = Instant::now();
+        room.handle_voice_state(now, UserId::new(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: true,
+        });
+        room.handle_voice_state(now, UserId::new(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        let lease = room.lease();
+        let p = &lease.participants[0];
+        assert_eq!(p.history.screen_sharing.len(), 1);
+        assert!(p.history.screen_sharing[0].is_ended(),
+            "screen sharing interval should be ended after stop");
+    }
+
+    #[test]
+    fn screen_sharing_stop_without_prior_is_noop() {
+        let mut room = make_room();
+        let now = Instant::now();
+        room.handle_voice_state(now, UserId::new(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        room.handle_voice_state(now, UserId::new(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        let lease = room.lease();
+        let p = &lease.participants[0];
+        assert_eq!(p.history.screen_sharing.len(), 0,
+            "no screen sharing activity should exist");
+    }
+
+    #[test]
+    fn screen_sharing_restart_creates_new_interval() {
+        let mut room = make_room();
+        let now = Instant::now();
+        room.handle_voice_state(now, UserId::new(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: true,
+        });
+        room.handle_voice_state(now, UserId::new(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        room.handle_voice_state(now, UserId::new(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: true,
+        });
+        let lease = room.lease();
+        let p = &lease.participants[0];
+        assert_eq!(p.history.screen_sharing.len(), 2,
+            "restart should create a new interval");
+    }
+
+    #[test]
+    fn held_lease_unaffected_by_participant_update() {
+        let mut p = make_participant();
+        let lease = p.lease();
+        let lease_audio_len_before = lease.history.audio.len();
+
+        // Update with state change while lease is held
+        p.update(Instant::now(), VoiceStateFlags {
+            is_muted: true,
+            is_deafened: false,
+            is_sharing_screen: false,
+        }).unwrap();
+
+        // Lease should still hold the old data (CoW isolation)
+        assert_eq!(lease.history.audio.len(), lease_audio_len_before,
+            "held lease must not see the participant's mutation");
+        assert!(!lease.history.audio.last().unwrap().muted,
+            "held lease must retain old mute state");
+
+        // Participant should have the new state
+        assert!(p.history.audio.last().unwrap().muted,
+            "participant should have new mute state");
+        assert!(p.history.audio.len() > lease.history.audio.len(),
+            "participant should have more activities after update");
+
+        drop(lease);
     }
 
     #[test]
@@ -542,5 +675,189 @@ mod cow_tests {
         let ptr_after = Arc::as_ptr(&p.history.screen_sharing);
         assert_eq!(ptr_before, ptr_after, "no-op screen sharing should not clone");
         drop(lease);
+    }
+
+    #[test]
+    fn update_screen_sharing_change_clones() {
+        // First, start sharing (no lease held)
+        let mut p = make_participant();
+        p.update(Instant::now(), VoiceStateFlags {
+            is_muted: false,
+            is_deafened: false,
+            is_sharing_screen: true,
+        }).unwrap();
+        // Now hold a lease
+        let lease = p.lease();
+        let ptr_before = Arc::as_ptr(&p.history.screen_sharing);
+
+        // Stop sharing (state change → should clone)
+        p.update(Instant::now(), VoiceStateFlags {
+            is_muted: false,
+            is_deafened: false,
+            is_sharing_screen: false,
+        }).unwrap();
+
+        let ptr_after = Arc::as_ptr(&p.history.screen_sharing);
+        assert_ne!(ptr_before, ptr_after, "screen sharing change should clone when lease held");
+        // Lease should still hold old state (1 ongoing interval)
+        assert_eq!(lease.history.screen_sharing.len(), 1);
+        assert!(lease.history.screen_sharing[0].is_ongoing(),
+            "held lease must retain ongoing interval");
+        drop(lease);
+    }
+}
+
+#[cfg(test)]
+mod room_tests {
+    use super::*;
+    use serenity::all::UserId;
+    use tokio::time::Instant;
+
+    fn make_room() -> Room {
+        use crate::room::RoomIdGenerator;
+        let mut id_gen = RoomIdGenerator::new();
+        Room::new(id_gen.next_id(), serenity::all::GuildId::new(1), serenity::all::ChannelId::new(2), Moment::now())
+    }
+
+    fn uid(n: u64) -> UserId {
+        UserId::new(n)
+    }
+
+    #[test]
+    fn connect_creates_participant() {
+        let mut room = make_room();
+        room.handle_voice_state(Instant::now(), uid(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        assert!(room.is_connected(uid(1)));
+        assert_eq!(room.participants.len(), 1);
+    }
+
+    #[test]
+    fn connect_twice_for_same_user_reconnects() {
+        let mut room = make_room();
+        let now = Instant::now();
+        room.handle_voice_state(now, uid(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        // disconnect
+        let status = room.handle_disconnect(now, uid(1)).unwrap();
+        assert_eq!(status, RoomStatus::Empty);
+        assert!(!room.is_connected(uid(1)));
+        // reconnect
+        room.handle_voice_state(now, uid(1), VoiceStateFlags {
+            is_muted: true, is_deafened: false, is_sharing_screen: false,
+        });
+        assert!(room.is_connected(uid(1)));
+        assert_eq!(room.participants.len(), 1); // same participant, not duplicated
+        let lease = room.lease();
+        assert_eq!(lease.participants[0].history.audio.len(), 2,
+            "reconnect should create a new audio activity");
+    }
+
+    #[test]
+    fn disconnect_returns_empty_when_last_leaves() {
+        let mut room = make_room();
+        let now = Instant::now();
+        room.handle_voice_state(now, uid(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        let status = room.handle_disconnect(now, uid(1)).unwrap();
+        assert_eq!(status, RoomStatus::Empty);
+        assert!(room.is_empty(), "room should report empty after last participant leaves");
+    }
+
+    #[test]
+    fn disconnect_returns_occupied_when_others_remain() {
+        let mut room = make_room();
+        let now = Instant::now();
+        room.handle_voice_state(now, uid(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        room.handle_voice_state(now, uid(2), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        let status = room.handle_disconnect(now, uid(1)).unwrap();
+        assert_eq!(status, RoomStatus::Occupied);
+    }
+
+    #[test]
+    fn voice_state_update_splits_audio_activity_on_mute_change() {
+        let mut room = make_room();
+        let now = Instant::now();
+        room.handle_voice_state(now, uid(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        room.handle_voice_state(now, uid(1), VoiceStateFlags {
+            is_muted: true, is_deafened: false, is_sharing_screen: false,
+        });
+        let lease = room.lease();
+        let p = &lease.participants[0];
+        // Should have 2 audio activities (initial + mute change)
+        assert_eq!(p.history.audio.len(), 2);
+        assert!(p.history.audio[1].muted);
+    }
+
+    #[test]
+    fn voice_state_update_same_state_does_not_split_audio_activity() {
+        let mut room = make_room();
+        let now = Instant::now();
+        room.handle_voice_state(now, uid(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        room.handle_voice_state(now, uid(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        let lease = room.lease();
+        let p = &lease.participants[0];
+        // Same state → no split, still 1 activity
+        assert_eq!(p.history.audio.len(), 1);
+    }
+
+    #[test]
+    fn handle_disconnect_unknown_participant_returns_error() {
+        let mut room = make_room();
+        let now = Instant::now();
+        // Disconnect for unknown user returns ParticipantNotFound (Err-based design).
+        // Session handles this as a no-op (warn + continue).
+        let result = room.handle_disconnect(now, uid(99));
+        assert!(matches!(result, Err(RoomError::ParticipantNotFound)));
+    }
+
+    #[test]
+    fn room_is_empty_on_creation() {
+        let room = make_room();
+        assert!(room.is_empty());
+    }
+
+    #[test]
+    fn is_connected_returns_false_for_unknown_user() {
+        let room = make_room();
+        assert!(!room.is_connected(uid(1)));
+    }
+
+    #[test]
+    fn lease_captures_state() {
+        let mut room = make_room();
+        let now = Instant::now();
+        room.handle_voice_state(now, uid(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: false,
+        });
+        let lease = room.lease();
+        assert_eq!(lease.participants.len(), 1);
+        assert_eq!(lease.channel_id, room.channel_id);
+    }
+
+    #[test]
+    fn screen_sharing_start_creates_ongoing_interval() {
+        let mut room = make_room();
+        let now = Instant::now();
+        room.handle_voice_state(now, uid(1), VoiceStateFlags {
+            is_muted: false, is_deafened: false, is_sharing_screen: true,
+        });
+        let lease = room.lease();
+        let p = &lease.participants[0];
+        assert_eq!(p.history.screen_sharing.len(), 1);
+        assert!(p.history.screen_sharing[0].is_ongoing());
     }
 }
