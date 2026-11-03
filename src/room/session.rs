@@ -205,34 +205,24 @@ impl Session {
                                     continue;
                                 };
 
-                                if self.room.is_connected(voice_state_update.user_id) {
+                                let was_connected = self.room.is_connected(voice_state_update.user_id);
+                                if was_connected {
                                     info!(user_id = %voice_state_update.user_id, flags = ?voice_state_update.flags, "Participant state updated");
-                                    let _ = self.event_tx.send(SessionEvent::PreUpdate);
-                                    self.room
-                                        .handle_update(
-                                            voice_state_update.now,
-                                            voice_state_update.user_id,
-                                            flags,
-                                        )
-                                        .expect("invalid state");
-                                    let _ = self.event_tx.send(SessionEvent::Updated {
-                                        room: self.room.lease(),
-                                    });
                                 } else {
                                     info!(user_id = %voice_state_update.user_id, "Participant connected");
-                                    let _ = self.event_tx.send(SessionEvent::PreUpdate);
-                                    self.room
-                                        .handle_connect(
-                                            voice_state_update.now,
-                                            voice_state_update.user_id,
-                                            flags,
-                                        )
-                                        .expect("invalid state");
-                                    idle_timer.abort();
-                                    let _ = self.event_tx.send(SessionEvent::Updated {
-                                        room: self.room.lease(),
-                                    });
                                 }
+                                let _ = self.event_tx.send(SessionEvent::PreUpdate);
+                                self.room.handle_voice_state(
+                                    voice_state_update.now,
+                                    voice_state_update.user_id,
+                                    flags,
+                                );
+                                if !was_connected {
+                                    idle_timer.abort();
+                                }
+                                let _ = self.event_tx.send(SessionEvent::Updated {
+                                    room: self.room.lease(),
+                                });
                             }
                             SessionMessage::RequestShutdown { reason, end } => {
                                 if !self.room.is_empty() {

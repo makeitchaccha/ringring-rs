@@ -63,7 +63,22 @@ impl Room {
     }
 
     /// Handles a user connecting to the voice channel.
-    pub fn handle_connect(
+    /// Routes a voice state update to the appropriate handler based on
+    /// whether the participant is currently connected.
+    pub fn handle_voice_state(
+        &mut self,
+        now: Instant,
+        id: UserId,
+        flags: VoiceStateFlags,
+    ) {
+        if self.is_connected(id) {
+            let _ = self.handle_update(now, id, flags);
+        } else {
+            let _ = self.handle_connect(now, id, flags);
+        }
+    }
+
+    fn handle_connect(
         &mut self,
         now: Instant,
         id: UserId,
@@ -112,7 +127,7 @@ impl Room {
     }
 
     /// Handles updates to a participant's voice state (e.g., mute, deafen, or screen sharing).
-    pub fn handle_update(
+    fn handle_update(
         &mut self,
         now: Instant,
         id: UserId,
