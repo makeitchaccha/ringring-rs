@@ -10,6 +10,23 @@ use std::sync::Arc;
 use thiserror::Error;
 use tiny_skia::{Color, IntSize, Pixmap};
 
+/// Avatar size (pixels) used for color extraction and rendering.
+const AVATAR_SIZE: u32 = 64;
+/// Maximum number of cached member visuals.
+const CACHE_CAPACITY: u64 = 128;
+/// Lab lightness range considered readable (excludes near-black and near-white).
+const MIN_LIGHTNESS: f32 = 20.0;
+const MAX_LIGHTNESS: f32 = 90.0;
+/// k-means clustering parameters.
+const KMEANS_CLUSTERS: usize = 3;
+const KMEANS_ITERATIONS: usize = 30;
+const KMEANS_CONVERGENCE: f32 = 1.0;
+const KMEANS_RUNS: usize = 5;
+/// Alpha factor applied to active color for inactive/muted state.
+const INACTIVE_ALPHA_FACTOR: f32 = 0.35;
+/// Lightness multiplier applied to active color for streaming state.
+const STREAMING_LIGHTNESS_FACTOR: f32 = 0.4;
+
 /// Visual assets and color palette derived from a member's avatar.
 #[derive(Clone)]
 pub struct MemberVisual {
@@ -49,7 +66,7 @@ impl MemberVisual {
             active_color.red(),
             active_color.green(),
             active_color.blue(),
-            active_color.alpha() * 0.35,
+            active_color.alpha() * INACTIVE_ALPHA_FACTOR,
         )
         .unwrap();
 
@@ -61,7 +78,7 @@ impl MemberVisual {
                 active_color.alpha(),
             )
             .into_color();
-            lab_color.l *= 0.4;
+            lab_color.l *= STREAMING_LIGHTNESS_FACTOR;
             let rgba_color = Srgba::from_color(lab_color);
             Color::from_rgba(
                 rgba_color.red,
@@ -122,8 +139,8 @@ impl AssetProvider {
         Self {
             client,
             serenity,
-            cache: Cache::new(128),
-            avatar_size: 64,
+            cache: Cache::new(CACHE_CAPACITY),
+            avatar_size: AVATAR_SIZE,
         }
     }
 
@@ -169,12 +186,19 @@ impl AssetProvider {
                         let lab: Vec<Lab> = from_component_slice::<Srgba<u8>>(&avatar_image)
                             .iter()
                             .map(|x| x.color.into_linear().into_color())
-                            .filter(|x: &Lab| 20.0 < x.l && x.l < 90.0)
+                            .filter(|x: &Lab| MIN_LIGHTNESS < x.l && x.l < MAX_LIGHTNESS)
                             .collect();
 
                         let mut result = Kmeans::new();
-                        for i in 0..5 {
-                            let run_result = get_kmeans(3, 30, 1.0, false, &lab, i);
+                        for i in 0..KMEANS_RUNS {
+                            let run_result = get_kmeans(
+                                KMEANS_CLUSTERS,
+                                KMEANS_ITERATIONS,
+                                KMEANS_CONVERGENCE,
+                                false,
+                                &lab,
+                                i as u64,
+                            );
                             if run_result.score < result.score {
                                 result = run_result;
                             }
@@ -198,7 +222,7 @@ impl AssetProvider {
                         active_color.red(),
                         active_color.green(),
                         active_color.blue(),
-                        active_color.alpha() * 0.35,
+                        active_color.alpha() * INACTIVE_ALPHA_FACTOR,
                     )
                     .unwrap();
                     let streaming_color = {
@@ -209,7 +233,7 @@ impl AssetProvider {
                             active_color.alpha(),
                         )
                         .into_color();
-                        lab_color.l *= 0.4;
+                        lab_color.l *= STREAMING_LIGHTNESS_FACTOR;
                         let rgba_color = Srgba::from_color(lab_color);
                         Color::from_rgba(
                             rgba_color.red,
