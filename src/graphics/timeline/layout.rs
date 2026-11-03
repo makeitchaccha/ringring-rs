@@ -51,6 +51,8 @@ impl Default for LayoutConfig {
 
 impl LayoutConfig {
     pub fn calculate(&self, n_entries: usize) -> Layout {
+        // Guard against zero entries to avoid zero-height bounding boxes.
+        let n_entries = n_entries.max(1);
         let total_entry_height = self.entry_height * n_entries as f32;
         let total_height = self.label_area_height + total_entry_height + self.margin.vertical();
         let timeline_width = self.aspect_ratio_policy.calculate_timeline_width(

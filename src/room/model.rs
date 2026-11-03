@@ -267,9 +267,9 @@ impl Participant {
         }
 
         let activities = Arc::make_mut(&mut self.history.audio);
-        let last_activity = activities
-            .last_mut()
-            .expect("is_connected() check failed; this should not happen");
+        let Some(last_activity) = activities.last_mut() else {
+            return Err(ParticipantError::InvalidState);
+        };
         if last_activity.is_same_state(flags) {
             return Ok(());
         }

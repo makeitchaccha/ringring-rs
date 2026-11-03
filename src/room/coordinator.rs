@@ -307,22 +307,29 @@ impl Coordinator {
                                     registry.get_channel(guild_id, message.user_id)
                                     && channel_id
                                         .is_none_or(|channel_id| channel_id != user_location)
-                                    && let Some(handle) = self.sessions.get_mut(&user_location)
-                                    && let Err(error) = handle.dispatch(
-                                        SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
-                                            now: message.now,
-                                            user_id: message.user_id,
-                                            flags: None,
-                                        }),
-                                    )
                                 {
-                                    error!(?error, "could not dispatch message");
-                                    self.sessions.remove(&user_location);
-                                    registry.unbind(guild_id, message.user_id);
-                                };
+                                    if let Some(handle) = self.sessions.get_mut(&user_location) {
+                                        if let Err(error) = handle.dispatch(
+                                            SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+                                                now: message.now,
+                                                user_id: message.user_id,
+                                                flags: None,
+                                            }),
+                                        ) {
+                                            error!(?error, "could not dispatch message");
+                                            self.sessions.remove(&user_location);
+                                            registry.unbind(guild_id, message.user_id);
+                                        }
+                                    } else {
+                                        // Session already gone; clean up stale registry entry.
+                                        registry.unbind(guild_id, message.user_id);
+                                    }
+                                }
 
                                 let Some(channel_id) = channel_id else {
-                                    // just ignore
+                                    // Disconnect: remove the user from the registry so stale
+                                    // locations do not linger after the session shuts down.
+                                    registry.unbind(guild_id, message.user_id);
                                     continue;
                                 };
 

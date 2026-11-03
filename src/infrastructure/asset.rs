@@ -59,16 +59,16 @@ impl MemberVisual {
         ];
 
         let (r, g, b) = PALETTE[(user_id.get() as usize) % PALETTE.len()];
-        let active_color =
-            Color::from_rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0).unwrap();
+        let active_color = Color::from_rgba(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0)
+            .unwrap_or(Color::BLACK);
 
         let inactive_color = Color::from_rgba(
-            active_color.red(),
-            active_color.green(),
-            active_color.blue(),
-            active_color.alpha() * INACTIVE_ALPHA_FACTOR,
+            active_color.red().clamp(0.0, 1.0),
+            active_color.green().clamp(0.0, 1.0),
+            active_color.blue().clamp(0.0, 1.0),
+            (active_color.alpha() * INACTIVE_ALPHA_FACTOR).clamp(0.0, 1.0),
         )
-        .unwrap();
+        .unwrap_or(Color::BLACK);
 
         let streaming_color = {
             let mut lab_color: Lab = Srgba::new(
@@ -81,12 +81,12 @@ impl MemberVisual {
             lab_color.l *= STREAMING_LIGHTNESS_FACTOR;
             let rgba_color = Srgba::from_color(lab_color);
             Color::from_rgba(
-                rgba_color.red,
-                rgba_color.green,
-                rgba_color.blue,
-                rgba_color.alpha,
+                rgba_color.red.clamp(0.0, 1.0),
+                rgba_color.green.clamp(0.0, 1.0),
+                rgba_color.blue.clamp(0.0, 1.0),
+                rgba_color.alpha.clamp(0.0, 1.0),
             )
-            .unwrap()
+            .unwrap_or(Color::BLACK)
         };
 
         let mut avatar = Pixmap::new(1, 1).unwrap();
@@ -189,6 +189,19 @@ impl AssetProvider {
                             .filter(|x: &Lab| MIN_LIGHTNESS < x.l && x.l < MAX_LIGHTNESS)
                             .collect();
 
+                        if lab.is_empty() {
+                            return Ok(MemberVisual {
+                                avatar: Pixmap::from_vec(
+                                    avatar_image.into_raw(),
+                                    IntSize::from_wh(avatar_size, avatar_size).unwrap(),
+                                )
+                                .ok_or(AssetError::PixmapConstruction)?,
+                                active_color: Color::BLACK,
+                                inactive_color: Color::BLACK,
+                                streaming_color: Color::BLACK,
+                            });
+                        }
+
                         let mut result = Kmeans::new();
                         for i in 0..KMEANS_RUNS {
                             let run_result = get_kmeans(
@@ -211,20 +224,25 @@ impl AssetProvider {
                         match dominant_color {
                             Some(color) => {
                                 let color = Srgba::from_color(color);
-                                Color::from_rgba(color.red, color.green, color.blue, color.alpha)
-                                    .unwrap()
+                                Color::from_rgba(
+                                    color.red.clamp(0.0, 1.0),
+                                    color.green.clamp(0.0, 1.0),
+                                    color.blue.clamp(0.0, 1.0),
+                                    color.alpha.clamp(0.0, 1.0),
+                                )
+                                .unwrap_or(Color::BLACK)
                             }
                             None => Color::BLACK,
                         }
                     };
 
                     let inactive_color = Color::from_rgba(
-                        active_color.red(),
-                        active_color.green(),
-                        active_color.blue(),
-                        active_color.alpha() * INACTIVE_ALPHA_FACTOR,
+                        active_color.red().clamp(0.0, 1.0),
+                        active_color.green().clamp(0.0, 1.0),
+                        active_color.blue().clamp(0.0, 1.0),
+                        (active_color.alpha() * INACTIVE_ALPHA_FACTOR).clamp(0.0, 1.0),
                     )
-                    .unwrap();
+                    .unwrap_or(Color::BLACK);
                     let streaming_color = {
                         let mut lab_color: Lab = Srgba::new(
                             active_color.red(),
@@ -236,12 +254,12 @@ impl AssetProvider {
                         lab_color.l *= STREAMING_LIGHTNESS_FACTOR;
                         let rgba_color = Srgba::from_color(lab_color);
                         Color::from_rgba(
-                            rgba_color.red,
-                            rgba_color.green,
-                            rgba_color.blue,
-                            rgba_color.alpha,
+                            rgba_color.red.clamp(0.0, 1.0),
+                            rgba_color.green.clamp(0.0, 1.0),
+                            rgba_color.blue.clamp(0.0, 1.0),
+                            rgba_color.alpha.clamp(0.0, 1.0),
                         )
-                        .unwrap()
+                        .unwrap_or(Color::BLACK)
                     };
 
                     let pixmap = Pixmap::from_vec(
