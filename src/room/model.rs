@@ -452,3 +452,91 @@ impl Interval {
         }
     }
 }
+
+#[cfg(test)]
+mod cow_tests {
+    use super::*;
+    use serenity::all::UserId;
+    use tokio::time::Instant;
+
+    fn make_participant() -> Participant {
+        let mut p = Participant::new(UserId::new(1));
+        p.connect(Instant::now(), VoiceStateFlags {
+            is_muted: false,
+            is_deafened: false,
+            is_sharing_screen: false,
+        }).unwrap();
+        p
+    }
+
+    #[test]
+    fn update_audio_same_state_does_not_clone() {
+        let mut p = make_participant();
+        // Hold a lease (refcount = 2)
+        let lease = p.lease();
+        let ptr_before = Arc::as_ptr(&p.history.audio);
+
+        // Update with same state (no-op)
+        p.update(Instant::now(), VoiceStateFlags {
+            is_muted: false,
+            is_deafened: false,
+            is_sharing_screen: false,
+        }).unwrap();
+
+        let ptr_after = Arc::as_ptr(&p.history.audio);
+        assert_eq!(ptr_before, ptr_after, "no-op update should not clone");
+        drop(lease);
+    }
+
+    #[test]
+    fn update_audio_different_state_clones() {
+        let mut p = make_participant();
+        let lease = p.lease();
+        let ptr_before = Arc::as_ptr(&p.history.audio);
+
+        // Update with different state (muted changed)
+        p.update(Instant::now(), VoiceStateFlags {
+            is_muted: true,
+            is_deafened: false,
+            is_sharing_screen: false,
+        }).unwrap();
+
+        let ptr_after = Arc::as_ptr(&p.history.audio);
+        assert_ne!(ptr_before, ptr_after, "state change should clone when lease held");
+        drop(lease);
+    }
+
+    #[test]
+    fn update_audio_no_lease_does_not_clone() {
+        let mut p = make_participant();
+        let ptr_before = Arc::as_ptr(&p.history.audio);
+
+        // Update with same state, no lease held
+        p.update(Instant::now(), VoiceStateFlags {
+            is_muted: false,
+            is_deafened: false,
+            is_sharing_screen: false,
+        }).unwrap();
+
+        let ptr_after = Arc::as_ptr(&p.history.audio);
+        assert_eq!(ptr_before, ptr_after, "no-op without lease should not clone (in-place)");
+    }
+
+    #[test]
+    fn update_screen_sharing_noop_does_not_clone() {
+        let mut p = make_participant();
+        let lease = p.lease();
+        let ptr_before = Arc::as_ptr(&p.history.screen_sharing);
+
+        // No sharing → no sharing (no-op)
+        p.update(Instant::now(), VoiceStateFlags {
+            is_muted: false,
+            is_deafened: false,
+            is_sharing_screen: false,
+        }).unwrap();
+
+        let ptr_after = Arc::as_ptr(&p.history.screen_sharing);
+        assert_eq!(ptr_before, ptr_after, "no-op screen sharing should not clone");
+        drop(lease);
+    }
+}
