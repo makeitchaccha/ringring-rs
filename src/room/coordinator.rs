@@ -383,6 +383,61 @@ fn start_session(
     tx
 }
 
+#[cfg(test)]
+mod coordinator_smoke_tests {
+    use super::*;
+    use crate::room::types::VoiceStateFlags;
+    use serenity::all::{ChannelId, GuildId, UserId};
+    use tokio::time::Instant;
+
+    #[tokio::test]
+    async fn coordinator_spawns_session_on_track() {
+        let (handle, mut event_rx) = Coordinator::spawn();
+        let now = Instant::now();
+
+        handle.track(ChannelId::new(1), GuildId::new(1), VoiceStateUpdate {
+            now,
+            user_id: UserId::new(1),
+            flags: Some(VoiceStateFlags {
+                is_muted: false,
+                is_deafened: false,
+                is_sharing_screen: false,
+            }),
+        }).unwrap();
+
+        let event = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            event_rx.recv(),
+        ).await.unwrap().unwrap();
+
+        match event {
+            CoordinatorEvent::Published { channel_id, .. } => {
+                assert_eq!(channel_id, ChannelId::new(1));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn coordinator_does_not_spawn_on_notify_without_session() {
+        let (handle, mut event_rx) = Coordinator::spawn();
+        let now = Instant::now();
+
+        // Notify for a channel with no existing session → should not spawn
+        handle.notify(GuildId::new(1), Some(ChannelId::new(2)), VoiceStateUpdate {
+            now,
+            user_id: UserId::new(1),
+            flags: None,
+        }).unwrap();
+
+        // Should timeout (no Published event)
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            event_rx.recv(),
+        ).await;
+        assert!(result.is_err(), "notify should not spawn a session");
+    }
+}
+
 mod registry {
     use super::*;
     pub(super) struct MemberRegistry {

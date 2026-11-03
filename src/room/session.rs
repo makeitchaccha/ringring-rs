@@ -336,6 +336,115 @@ impl Session {
 
 
 
+#[cfg(test)]
+mod session_smoke_tests {
+    use super::*;
+    use serenity::all::{ChannelId, GuildId, UserId};
+    use tokio::sync::mpsc;
+    use tokio::time::Instant;
+
+    #[tokio::test]
+    async fn session_emits_updated_on_connect() {
+        use crate::room::RoomIdGenerator;
+        let mut id_gen = RoomIdGenerator::new();
+        let room = Room::new(
+            id_gen.next_id(),
+            GuildId::new(1),
+            ChannelId::new(2),
+            Moment::now(),
+        );
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (coord_tx, _coord_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+
+        let session = Session::new(room, rx, coord_tx, event_tx);
+        tokio::spawn(session.run());
+
+        tx.send(SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: Some(VoiceStateFlags {
+                is_muted: false,
+                is_deafened: false,
+                is_sharing_screen: false,
+            }),
+        })).unwrap();
+
+        // Skip PreUpdate
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            event_rx.recv(),
+        ).await.unwrap().unwrap();
+
+        let event = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            event_rx.recv(),
+        ).await.unwrap().unwrap();
+
+        match event {
+            SessionEvent::Updated { room } => {
+                assert_eq!(room.participants.len(), 1);
+            }
+            other => panic!("expected Updated, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_emits_updated_on_disconnect() {
+        use crate::room::RoomIdGenerator;
+        let mut id_gen = RoomIdGenerator::new();
+        let room = Room::new(
+            id_gen.next_id(),
+            GuildId::new(1),
+            ChannelId::new(2),
+            Moment::now(),
+        );
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (coord_tx, _coord_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+
+        let session = Session::new(room, rx, coord_tx, event_tx);
+        tokio::spawn(session.run());
+
+        // Connect first
+        tx.send(SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: Some(VoiceStateFlags {
+                is_muted: false,
+                is_deafened: false,
+                is_sharing_screen: false,
+            }),
+        })).unwrap();
+
+        // Consume PreUpdate + Updated from connect
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv()).await.unwrap().unwrap();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv()).await.unwrap().unwrap();
+
+        // Disconnect
+        tx.send(SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: None,
+        })).unwrap();
+
+        // Skip PreUpdate
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv()).await.unwrap().unwrap();
+
+        let event = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            event_rx.recv(),
+        ).await.unwrap().unwrap();
+
+        match event {
+            SessionEvent::Updated { room } => {
+                assert_eq!(room.participants.len(), 1); // participant still tracked
+            }
+            other => panic!("expected Updated, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+}
+
 struct IdleTracker {
     start: Option<Instant>,
     deadline: Option<Instant>,
