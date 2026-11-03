@@ -376,8 +376,12 @@ impl Participant {
 /// The activity history of a participant, stored behind `Arc` for Copy-on-Write sharing.
 ///
 /// Updates use `Arc::make_mut` so that the vector is mutated in place when no
-/// lease is held, and cloned only when a reporter is concurrently reading.
-/// See [`Room::lease`] for the full rationale.
+/// `Arc` reference is held (refcount == 1), and cloned only when a reference
+/// exists (e.g. a slow reporter's buffered `Updated` message or a held lease).
+///
+/// No-op updates (state unchanged) return before calling `make_mut`, avoiding
+/// clones even when the refcount is > 1.  See [`Room::lease`] for the full
+/// rationale and the `PreUpdate` optimization.
 #[derive(Debug, Clone)]
 pub struct History {
     /// Audio activities, including mute and deafen states.
