@@ -4,8 +4,7 @@ use crate::room::types::VoiceStateFlags;
 use crate::room::{Moment, RoomLease};
 use better_tokio_select::tokio_select;
 use serenity::all::UserId;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+
 use std::time::Duration;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{broadcast, mpsc};
@@ -169,7 +168,7 @@ impl Session {
     pub async fn run(mut self) {
         info!("Session started");
 
-        let mut idle_timer = IdleTimer::with_timeout(Duration::from_secs(60));
+        let mut idle = IdleTracker::new();
 
         loop {
             tokio_select!(
@@ -196,7 +195,7 @@ impl Session {
                                     };
                                     if status == RoomStatus::Empty {
                                         info!("Room is now empty, starting idle countdown");
-                                        idle_timer.start_countdown();
+                                        idle.start_countdown();
                                     }
                                     let _ = self.event_tx.send(SessionEvent::Updated {
                                         room: self.room.lease(),
@@ -218,7 +217,7 @@ impl Session {
                                     flags,
                                 );
                                 if !was_connected {
-                                    idle_timer.abort();
+                                    idle.abort();
                                 }
                                 let _ = self.event_tx.send(SessionEvent::Updated {
                                     room: self.room.lease(),
@@ -246,7 +245,7 @@ impl Session {
                                 }
 
                                 if reason == ShutdownReason::Idle
-                                    && !idle_timer.has_expired(Instant::now())
+                                    && !idle.has_expired()
                                 {
                                     info!(
                                         "Shutdown requested but room is recently active. Rejecting."
@@ -285,22 +284,24 @@ impl Session {
                         }
                     }
 
-                    .. if let _ = &mut idle_timer => {
-                        idle_timer.wait_for_shutdown_request();
-                        if let Some(status) = idle_timer.status.as_ref() {
-                            info!(idle_since = ?status.start, "Detected idle, starting idle-shutdown sequence...");
-                            if let Err(err) =
-                                self.coordinator_tx.send(CoordinatorInternalMessage::Idle {
+                    .. if let _ = async {
+                        match idle.deadline() {
+                            Some(d) => tokio::time::sleep_until(d).await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        if idle.deadline().is_some() {
+                            let start = idle.fire();
+                            info!(idle_since = ?start, "Detected idle, starting idle-shutdown sequence...");
+                            if let Err(err) = self.coordinator_tx.send(
+                                CoordinatorInternalMessage::Idle {
                                     channel_id: self.room.channel_id,
-                                    since: self.room.start.at(status.start),
-                                })
-                            {
+                                    since: self.room.start.at(start),
+                                },
+                            ) {
                                 error!(error = %err, "Failed to send idle notification");
                                 break;
                             }
-                        } else {
-                            info!("Safety timer fired for long-running session; refreshing timer");
-                            idle_timer.abort();
                         }
                     }
                 }
@@ -309,55 +310,55 @@ impl Session {
     }
 }
 
-struct IdleTimer {
-    inner: Pin<Box<tokio::time::Sleep>>,
-    timeout: Duration,
-    status: Option<IdleStatus>,
+
+
+struct IdleTracker {
+    start: Option<Instant>,
+    deadline: Option<Instant>,
+    notified: bool,
 }
 
-struct IdleStatus {
-    start: Instant,
-    deadline: Instant,
-}
+impl IdleTracker {
+    const TIMEOUT: Duration = Duration::from_secs(60);
 
-impl IdleTimer {
-    const FAR_FUTURE: Duration = Duration::from_secs(86400 * 30);
-
-    fn with_timeout(timeout: Duration) -> Self {
+    fn new() -> Self {
         Self {
-            inner: Box::pin(tokio::time::sleep(IdleTimer::FAR_FUTURE)),
-            timeout,
-            status: None,
+            start: None,
+            deadline: None,
+            notified: false,
         }
     }
 
     fn start_countdown(&mut self) {
-        let start = Instant::now();
-        let deadline = start + self.timeout;
-        self.inner.as_mut().reset(deadline);
-        self.status = Some(IdleStatus { start, deadline });
-    }
-
-    fn has_expired(&self, now: Instant) -> bool {
-        self.status
-            .as_ref()
-            .is_some_and(|status| status.deadline < now)
-    }
-
-    fn wait_for_shutdown_request(&mut self) {
-        self.inner.as_mut().reset(Instant::now() + Self::FAR_FUTURE);
+        let now = Instant::now();
+        self.start = Some(now);
+        self.deadline = Some(now + Self::TIMEOUT);
+        self.notified = false;
     }
 
     fn abort(&mut self) {
-        self.inner.as_mut().reset(Instant::now() + Self::FAR_FUTURE);
-        self.status = None;
+        self.start = None;
+        self.deadline = None;
+        self.notified = false;
     }
-}
 
-impl Future for IdleTimer {
-    type Output = ();
+    fn has_expired(&self) -> bool {
+        self.notified
+    }
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.get_mut().inner.as_mut().poll(cx)
+    fn deadline(&self) -> Option<Instant> {
+        if self.notified {
+            None
+        } else {
+            self.deadline
+        }
+    }
+
+    /// Marks the countdown as fired: records the start time and clears the deadline.
+    fn fire(&mut self) -> Instant {
+        let start = self.start.take().unwrap_or_else(Instant::now);
+        self.notified = true;
+        self.deadline = None;
+        start
     }
 }
