@@ -179,9 +179,10 @@ impl Room {
     ///
     /// ### Performance Note
     /// The recipient should drop the returned lease as soon as possible.
-    /// Holding onto it keeps the reference count of the internal activity history high,
-    /// which prevents efficient in-place updates (via Copy-on-Write) in the main room task
-    /// and forces a full clone of the history vector on every subsequent update.
+    /// While a lease is held, the first mutating update clones the history vector
+    /// (O(n)) because the `Arc` refcount is > 1.  Subsequent updates mutate the
+    /// clone in place (O(1)) even if the lease is still alive, but the clone
+    /// increases memory usage until the lease is dropped.
     pub fn lease(&self) -> RoomLease {
         let participants = self
             .participants
@@ -296,13 +297,21 @@ impl Participant {
             return Err(ParticipantError::InvalidState);
         }
 
+        // Check state before cloning the history vector.
+        let same_state = self
+            .history
+            .audio
+            .last()
+            .map(|a| a.is_same_state(flags))
+            .unwrap_or(false);
+        if same_state {
+            return Ok(());
+        }
+
         let activities = Arc::make_mut(&mut self.history.audio);
         let Some(last_activity) = activities.last_mut() else {
             return Err(ParticipantError::InvalidState);
         };
-        if last_activity.is_same_state(flags) {
-            return Ok(());
-        }
         last_activity
             .interval
             .end_at(now)
@@ -321,11 +330,20 @@ impl Participant {
         now: Instant,
         flags: VoiceStateFlags,
     ) -> Result<(), ParticipantError> {
+        // Determine whether this is a no-op before cloning the history vector.
+        let last_ongoing = self.history.screen_sharing.last().map(|a| a.is_ongoing());
+        let is_noop = matches!(
+            (last_ongoing, flags.is_sharing_screen),
+            (None, false) | (Some(false), false) | (Some(true), true)
+        );
+        if is_noop {
+            return Ok(());
+        }
+
         let activities = Arc::make_mut(&mut self.history.screen_sharing);
         let Some(last_activity) = activities.last_mut() else {
-            if flags.is_sharing_screen {
-                activities.push(Interval::start_at(now));
-            }
+            // No activity yet but sharing is starting.
+            activities.push(Interval::start_at(now));
             return Ok(());
         };
 

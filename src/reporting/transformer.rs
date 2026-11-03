@@ -32,7 +32,8 @@ pub fn transform(
         .map(|p| {
             let visual = visuals
                 .get(&p.id)
-                .expect("visual must be pre-fetched before rendering.");
+                .cloned()
+                .unwrap_or_else(|| MemberVisual::fallback(p.id));
 
             let filtered_audio_activities = p
                 .history

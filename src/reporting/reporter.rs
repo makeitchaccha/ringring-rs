@@ -173,7 +173,7 @@ impl Reporter {
                     "- ⏳ `{:>2}:{:02}` {}",
                     hours,
                     minutes,
-                    names.get(&p.id).unwrap()
+                    names.get(&p.id).map(String::as_str).unwrap_or("")
                 )
             })
             .collect::<Vec<String>>()
