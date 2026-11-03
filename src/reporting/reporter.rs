@@ -4,7 +4,7 @@ use crate::reporting::transformer::transform;
 use crate::reporting::types::RoomSnapshot;
 use crate::reporting::{ParticipantSnapshot, ReportAnchor, transformer};
 use crate::room::{Moment, SessionEvent};
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use better_tokio_select::tokio_select;
 use chrono::TimeDelta;
 use chrono_tz::Tz;
@@ -192,20 +192,32 @@ impl Reporter {
         asset_provider: &AssetProvider,
         guild_id: GuildId,
         participants: &[ParticipantSnapshot],
-    ) -> anyhow::Result<HashMap<UserId, MemberVisual>> {
+    ) -> HashMap<UserId, MemberVisual> {
         let mut visuals = HashMap::new();
         for participant in participants {
-            let Ok(visual) = asset_provider
-                .get_members_visual(guild_id, participant.id)
-                .await
-            else {
-                // TODO: fallback
-                return Err(anyhow!("Cannot fetch member visual: {}", participant.id));
-            };
-
-            visuals.insert(participant.id, visual);
+            match asset_provider.get_members_visual(guild_id, participant.id).await {
+                Ok(visual) => {
+                    visuals.insert(participant.id, visual);
+                }
+                Err(error) => {
+                    warn!(
+                        user_id = %participant.id,
+                        error = %error,
+                        "Failed to fetch member visual, using fallback"
+                    );
+                    visuals.insert(
+                        participant.id,
+                        MemberVisual {
+                            avatar: tiny_skia::Pixmap::new(1, 1).unwrap(),
+                            active_color: tiny_skia::Color::BLACK,
+                            inactive_color: tiny_skia::Color::BLACK,
+                            streaming_color: tiny_skia::Color::BLACK,
+                        },
+                    );
+                }
+            }
         }
-        Ok(visuals)
+        visuals
     }
 
     async fn perform_report(
@@ -219,7 +231,7 @@ impl Reporter {
             snapshot.guild_id,
             snapshot.participants.as_ref(),
         )
-        .await?;
+        .await;
 
         let elapsed =
             TimeDelta::from_std(now.mono - snapshot.start.mono).unwrap_or(TimeDelta::zero());
