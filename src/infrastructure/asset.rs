@@ -118,6 +118,9 @@ pub enum AssetError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Response body too large (limit: {0} bytes)")]
+    TooLarge(usize),
+
     #[error("Async task join error: {0}")]
     Join(#[from] tokio::task::JoinError),
 }
@@ -167,7 +170,19 @@ impl AssetProvider {
 
                 let response = self.client.execute(request).await?;
 
+                // Cap download size to prevent OOM from oversized responses.
+                // Discord enforces avatar limits server-side, but a compromised
+                // or misbehaving host could serve an arbitrarily large body.
+                const MAX_AVATAR_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
+                if let Some(len) = response.content_length()
+                    && len as usize > MAX_AVATAR_BYTES
+                {
+                    return Err(AssetError::TooLarge(MAX_AVATAR_BYTES));
+                }
                 let avatar_bytes = response.bytes().await?;
+                if avatar_bytes.len() > MAX_AVATAR_BYTES {
+                    return Err(AssetError::TooLarge(MAX_AVATAR_BYTES));
+                }
 
                 let avatar_size = self.avatar_size;
 
