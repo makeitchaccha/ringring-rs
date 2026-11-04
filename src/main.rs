@@ -16,6 +16,7 @@ use serenity::all::GatewayIntents;
 use serenity::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::__private18::AsDynError;
 use tracing::{error, info};
 
@@ -47,6 +48,7 @@ async fn main() {
                     report_channel: entry.report_channel,
                     layout_config: LayoutConfig::default(),
                     timezone: entry.timezone.unwrap_or(config.timezone),
+                    image_format: entry.image_format.clone(),
                 },
             )
         })
@@ -60,7 +62,8 @@ async fn main() {
     let subscription_provider = Arc::new(StaticSubscriptionProvider::new(subscriptions));
 
     // 3. Spawn Coordinator (The Heart)
-    let (coordinator_handle, coordinator_event_rx) = Coordinator::spawn();
+    let (coordinator_handle, coordinator_event_rx) =
+        Coordinator::spawn(Duration::from_secs(config.idle_timeout_secs));
 
     // 4. Set gateway intents
     let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;

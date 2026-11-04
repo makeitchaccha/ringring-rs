@@ -8,7 +8,6 @@ use anyhow::Context;
 use better_tokio_select::tokio_select;
 use chrono::TimeDelta;
 use chrono_tz::Tz;
-use image::ImageFormat;
 use serenity::all::{
     Cache, CacheHttp, Colour, CreateAttachment, CreateComponent, CreateContainer,
     CreateContainerComponent, CreateMediaGalleryItem, CreateSeparator, CreateTextDisplay,
@@ -63,13 +62,33 @@ pub struct Reporter {
     session_event_rx: broadcast::Receiver<SessionEvent>,
     anchor: ReportAnchor,
     timezone: Tz,
+    image_format: image::ImageFormat,
 }
 
 impl Reporter {
-    const TIMELINE_IMAGE_FILE: &'static str = "timeline.webp";
-    const TIMELINE_IMAGE_URL: &'static str =
-        constcat::concat!("attachment://", Reporter::TIMELINE_IMAGE_FILE);
+    /// Parses a config string into an `image::ImageFormat`.
+    pub fn parse_image_format(s: &str) -> image::ImageFormat {
+        match s.to_lowercase().as_str() {
+            "png" => image::ImageFormat::Png,
+            "jpeg" | "jpg" => image::ImageFormat::Jpeg,
+            "gif" => image::ImageFormat::Gif,
+            _ => image::ImageFormat::WebP,
+        }
+    }
+    fn image_file_name(&self) -> &'static str {
+        match self.image_format {
+            image::ImageFormat::Png => "timeline.png",
+            image::ImageFormat::Jpeg => "timeline.jpg",
+            image::ImageFormat::Gif => "timeline.gif",
+            _ => "timeline.webp",
+        }
+    }
 
+    fn image_file_url(&self) -> String {
+        format!("attachment://{}", self.image_file_name())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         http: Arc<Http>,
         cache: Arc<Cache>,
@@ -78,6 +97,7 @@ impl Reporter {
         session_event_rx: broadcast::Receiver<SessionEvent>,
         anchor: ReportAnchor,
         timezone: Tz,
+        image_format: image::ImageFormat,
     ) -> Self {
         Self {
             http,
@@ -87,9 +107,11 @@ impl Reporter {
             session_event_rx,
             anchor,
             timezone,
+            image_format,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         http: Arc<Http>,
         cache: Arc<Cache>,
@@ -98,6 +120,7 @@ impl Reporter {
         session_event_rx: broadcast::Receiver<SessionEvent>,
         anchor: ReportAnchor,
         timezone: Tz,
+        image_format: image::ImageFormat,
     ) {
         let reporter = Self::new(
             http,
@@ -107,6 +130,7 @@ impl Reporter {
             session_event_rx,
             anchor,
             timezone,
+            image_format,
         );
         tokio::spawn(reporter.run());
     }
@@ -118,12 +142,13 @@ impl Reporter {
         timestamp: Timestamp,
         elapsed: (Duration, Duration),
         accent_color: Colour,
+        image_url: &'a str,
     ) -> Report<'a> {
         Report {
             title: CreateTextDisplay::new(title),
             description: CreateTextDisplay::new(description),
             timeline: CreateMediaGallery::new(vec![CreateMediaGalleryItem::new(
-                CreateUnfurledMediaItem::new(Self::TIMELINE_IMAGE_URL),
+                CreateUnfurledMediaItem::new(image_url),
             )]),
             history: CreateContainer::new(vec![CreateContainerComponent::TextDisplay(
                 CreateTextDisplay::new(format!("### 履歴\n{}", history)),
@@ -280,6 +305,7 @@ impl Reporter {
         };
 
         let renderer = self.renderer.clone();
+        let image_format = self.image_format;
 
         let task: Result<_, anyhow::Error> = tokio::task::spawn_blocking(move || {
             let start = Instant::now();
@@ -287,8 +313,8 @@ impl Reporter {
             let end_rendering = Instant::now();
 
             let mut bytes: Vec<u8> = Vec::new();
-            img.write_to(&mut Cursor::new(&mut bytes), ImageFormat::WebP)
-                .context("failed to encode webp image")?;
+            img.write_to(&mut Cursor::new(&mut bytes), image_format)
+                .context("failed to encode image")?;
             let end_encoding = Instant::now();
             Ok((bytes, end_rendering - start, end_encoding - end_rendering))
         })
@@ -297,6 +323,9 @@ impl Reporter {
 
         let (image, rendering_elapsed, encoding_elapsed) = task.context("failed to render")?;
 
+        let image_url = self.image_file_url();
+        let image_file = self.image_file_name();
+
         let report = Self::generate_report(
             &title,
             &description,
@@ -304,13 +333,14 @@ impl Reporter {
             now.wall,
             (rendering_elapsed, encoding_elapsed),
             colour,
+            &image_url,
         );
 
         self.anchor
             .sync(
                 &self.http,
                 report.generate_component(),
-                CreateAttachment::bytes(image, Self::TIMELINE_IMAGE_FILE),
+                CreateAttachment::bytes(image, image_file),
             )
             .await
             .context("failed to sync anchor")?;

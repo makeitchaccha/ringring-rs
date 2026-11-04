@@ -164,6 +164,7 @@ pub struct Session {
     rx: mpsc::UnboundedReceiver<SessionMessage>,
     coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
     event_tx: broadcast::Sender<SessionEvent>,
+    idle_timeout: Duration,
 }
 
 impl Session {
@@ -172,12 +173,14 @@ impl Session {
         rx: mpsc::UnboundedReceiver<SessionMessage>,
         coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
         event_tx: broadcast::Sender<SessionEvent>,
+        idle_timeout: Duration,
     ) -> Session {
         Session {
             room,
             rx,
             coordinator_tx,
             event_tx,
+            idle_timeout,
         }
     }
 
@@ -192,7 +195,7 @@ impl Session {
     pub async fn run(mut self) {
         info!("Session started");
 
-        let mut idle = IdleTracker::new();
+        let mut idle = IdleTracker::new(self.idle_timeout);
 
         loop {
             tokio_select!(
@@ -357,7 +360,7 @@ mod session_smoke_tests {
         let (coord_tx, _coord_rx) = mpsc::unbounded_channel();
         let (event_tx, mut event_rx) = broadcast::channel(4);
 
-        let session = Session::new(room, rx, coord_tx, event_tx);
+        let session = Session::new(room, rx, coord_tx, event_tx, Duration::from_secs(60));
         tokio::spawn(session.run());
 
         tx.send(SessionMessage::VoiceStateUpdate(VoiceStateUpdate {
@@ -403,7 +406,7 @@ mod session_smoke_tests {
         let (coord_tx, _coord_rx) = mpsc::unbounded_channel();
         let (event_tx, mut event_rx) = broadcast::channel(4);
 
-        let session = Session::new(room, rx, coord_tx, event_tx);
+        let session = Session::new(room, rx, coord_tx, event_tx, Duration::from_secs(60));
         tokio::spawn(session.run());
 
         // Connect first
@@ -449,22 +452,22 @@ struct IdleTracker {
     start: Option<Instant>,
     deadline: Option<Instant>,
     notified: bool,
+    timeout: Duration,
 }
 
 impl IdleTracker {
-    const TIMEOUT: Duration = Duration::from_secs(60);
-
-    fn new() -> Self {
+    fn new(timeout: Duration) -> Self {
         Self {
             start: None,
             deadline: None,
             notified: false,
+            timeout,
         }
     }
 
     fn start_countdown(&mut self, now: Instant) {
         self.start = Some(now);
-        self.deadline = Some(now + Self::TIMEOUT);
+        self.deadline = Some(now + self.timeout);
         self.notified = false;
     }
 
@@ -587,7 +590,7 @@ mod idle_tracker_tests {
 
     #[test]
     fn start_countdown_sets_deadline() {
-        let mut tracker = IdleTracker::new();
+        let mut tracker = IdleTracker::new(Duration::from_secs(60));
         let now = Instant::now();
         tracker.start_countdown(now);
         assert!(tracker.deadline().is_some());
@@ -596,7 +599,7 @@ mod idle_tracker_tests {
 
     #[test]
     fn abort_clears_state() {
-        let mut tracker = IdleTracker::new();
+        let mut tracker = IdleTracker::new(Duration::from_secs(60));
         tracker.start_countdown(Instant::now());
         tracker.abort();
         assert!(tracker.deadline().is_none());
@@ -605,7 +608,7 @@ mod idle_tracker_tests {
 
     #[test]
     fn fire_sets_notified() {
-        let mut tracker = IdleTracker::new();
+        let mut tracker = IdleTracker::new(Duration::from_secs(60));
         let now = Instant::now();
         tracker.start_countdown(now);
         let start = tracker.fire(now);
@@ -616,7 +619,7 @@ mod idle_tracker_tests {
 
     #[test]
     fn fire_uses_fallback_when_start_is_none() {
-        let mut tracker = IdleTracker::new();
+        let mut tracker = IdleTracker::new(Duration::from_secs(60));
         let now = Instant::now();
         let start = tracker.fire(now);
         assert_eq!(start, now);
@@ -625,7 +628,7 @@ mod idle_tracker_tests {
 
     #[test]
     fn deadline_returns_none_after_fire() {
-        let mut tracker = IdleTracker::new();
+        let mut tracker = IdleTracker::new(Duration::from_secs(60));
         tracker.start_countdown(Instant::now());
         tracker.fire(Instant::now());
         assert!(tracker.deadline().is_none());

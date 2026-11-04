@@ -8,6 +8,7 @@ pub struct Subscription {
     pub report_channel: ChannelId,
     pub layout_config: LayoutConfig,
     pub timezone: Tz,
+    pub image_format: String,
 }
 
 pub trait SubscriptionProvider: Send + Sync {

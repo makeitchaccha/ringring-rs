@@ -63,6 +63,7 @@ impl Publisher {
                             session_event_rx.resubscribe(),
                             ReportAnchor::new(subscription.report_channel),
                             subscription.timezone,
+                            Reporter::parse_image_format(&subscription.image_format),
                         );
                     }
                 }
