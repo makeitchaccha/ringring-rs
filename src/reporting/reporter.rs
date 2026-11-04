@@ -226,7 +226,7 @@ impl Reporter {
         .await;
 
         let elapsed =
-            TimeDelta::from_std(now.mono - snapshot.start.mono).unwrap_or(TimeDelta::zero());
+            now.mono.checked_duration_since(snapshot.start.mono).and_then(|d| TimeDelta::from_std(d).ok()).unwrap_or(TimeDelta::zero());
         let history = Self::format_history(
             &snapshot.participants,
             now.mono,

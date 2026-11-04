@@ -23,6 +23,10 @@ The default `jemalloc` feature fails to build on this nixos-unstable (glibc 2.44
 - `src/infrastructure/` — AssetProvider (avatar fetch + k-means color extraction)
 - `src/presentation/` — Discord event handler (VoiceHandler)
 
+## Review Policy
+
+When reviewing code (via subagent or otherwise), **report findings only**. Do not modify source files during a review. Fixes should be applied separately after the user approves them.
+
 ## Key Design Decisions
 
 - Room is a pure state machine (Instant-injected, no I/O)

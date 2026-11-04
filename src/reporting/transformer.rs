@@ -73,7 +73,7 @@ pub fn transform(
         terminated_at: to,
         created_timestamp: room.start.wall.with_timezone(&timezone).naive_local(),
         entries,
-        axis: choose_suitable_axis(to - from),
+        axis: choose_suitable_axis(to.saturating_duration_since(from)),
     }
 }
 
@@ -131,6 +131,9 @@ fn convert_to_voice_sections<'a>(
     end: Instant,
     history: impl IntoIterator<Item = &'a AudioActivity>,
 ) -> Vec<VoiceSection> {
+    if end <= start {
+        return Vec::new();
+    }
     let duration = end - start;
     if duration.is_zero() {
         return Vec::new();
@@ -142,9 +145,9 @@ fn convert_to_voice_sections<'a>(
         .filter_map(|activity| {
             let fill_style = FillStyle::from_flags(activity.muted, activity.deafened);
 
-            let start_ratio = (activity.interval.start - start).as_secs_f32() / duration_sec;
+            let start_ratio = activity.interval.start.saturating_duration_since(start).as_secs_f32() / duration_sec;
             let end_ratio =
-                (activity.interval.end.unwrap_or(now) - start).as_secs_f32() / duration_sec;
+                activity.interval.end.unwrap_or(now).saturating_duration_since(start).as_secs_f32() / duration_sec;
 
             Some(VoiceSection {
                 span: RatioSpan::clamped(start_ratio, end_ratio)?,
@@ -160,6 +163,9 @@ fn convert_to_streaming_sections<'a>(
     end: Instant,
     activities: impl IntoIterator<Item = &'a Interval>,
 ) -> Vec<StreamingSection> {
+    if end <= start {
+        return Vec::new();
+    }
     let duration = end - start;
     if duration.is_zero() {
         return Vec::new();
@@ -169,8 +175,8 @@ fn convert_to_streaming_sections<'a>(
     activities
         .into_iter()
         .filter_map(|activity| {
-            let start_ratio = (activity.start - start).as_secs_f32() / duration_sec;
-            let end_ratio = (activity.end.unwrap_or(now) - start).as_secs_f32() / duration_sec;
+            let start_ratio = activity.start.saturating_duration_since(start).as_secs_f32() / duration_sec;
+            let end_ratio = activity.end.unwrap_or(now).saturating_duration_since(start).as_secs_f32() / duration_sec;
 
             Some(StreamingSection {
                 span: RatioSpan::clamped(start_ratio, end_ratio)?,

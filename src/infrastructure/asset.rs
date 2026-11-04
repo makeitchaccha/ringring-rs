@@ -363,11 +363,16 @@ impl AssetProvider {
                 let avatar_url = self.serenity.get_member(guild_id, user_id).await?.face();
                 let request = self.client.get(avatar_url).build()?;
 
-                let response = self.client.execute(request).await?;
+                let mut response = self.client.execute(request).await?;
 
                 check_avatar_size(response.content_length(), 0)?;
-                let avatar_bytes = response.bytes().await?;
-                check_avatar_size(None, avatar_bytes.len())?;
+                let mut avatar_bytes = Vec::new();
+                while let Some(chunk) = response.chunk().await? {
+                    if avatar_bytes.len() + chunk.len() > MAX_AVATAR_BYTES {
+                        return Err(AssetError::TooLarge(MAX_AVATAR_BYTES));
+                    }
+                    avatar_bytes.extend_from_slice(&chunk);
+                }
 
                 let avatar_size = self.avatar_size;
 
