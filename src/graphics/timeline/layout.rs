@@ -44,12 +44,19 @@ impl Default for LayoutConfig {
             min_timeline_width: 900.0,
             entry_height: 70.0,
             avatar_size: 64.0,
-            aspect_ratio_policy: AspectRatioPolicy::discord_thumbnail_12x7(),
+            aspect_ratio_policy: AspectRatioPolicy::min_aspect_ratio_12x7(),
         }
     }
 }
 
 impl LayoutConfig {
+    /// Computes the layout for a timeline with `n_entries` participants.
+    ///
+    /// The total image height grows with the number of entries.  The width is
+    /// derived from the aspect-ratio policy but clamped to `min_timeline_width`,
+    /// so for few participants the image is wider than the target ratio (only
+    /// the height grows).  For many participants the image approaches the
+    /// target ratio exactly.
     pub fn calculate(&self, n_entries: usize) -> Layout {
         // Guard against zero entries to avoid zero-height bounding boxes.
         let n_entries = n_entries.max(1);
