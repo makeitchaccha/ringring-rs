@@ -534,6 +534,18 @@ mod registry {
             }
         }
 
+        /// Removes a user from both maps.  Returns the channel they were bound to.
+        ///
+        /// # Invariant
+        /// `member_channel` and `channel_members` are always kept in sync by
+        /// `bind`/`unbind`/`drain_channel`.  If `member_channel.remove` returns
+        /// `Some(channel)`, then `channel_members` must contain `(guild, channel)`
+        /// with `user` in its list — because `bind` inserts into both maps
+        /// atomically (unbind first, then insert).  The only way the entry
+        /// could be missing is if `drain_channel` already removed it, but then
+        /// `member_channel.remove` would have returned `None` (drain removes
+        /// from both maps).  Therefore the `expect` below is safe under the
+        /// single-threaded Coordinator execution model.
         pub(super) fn unbind(&mut self, guild: GuildId, user: UserId) -> Option<ChannelId> {
             let channel = self.member_channel.remove(&(guild, user))?;
             let members = self
@@ -553,6 +565,14 @@ mod registry {
             Some(channel)
         }
 
+        /// Binds a user to a channel.  If the user was previously bound to a
+        /// different channel, they are unbound first.
+        ///
+        /// # Invariant
+        /// After `bind` returns, both `member_channel` and `channel_members`
+        /// contain consistent entries for `(guild, user, channel)`.  `unbind`
+        /// is called first to remove any stale mapping, then both maps are
+        /// updated atomically (no await points between them).
         pub(super) fn bind(&mut self, guild: GuildId, user: UserId, channel: ChannelId) {
             if self.get_channel(guild, user) == Some(channel) {
                 return;
@@ -565,6 +585,16 @@ mod registry {
                 .push(user);
         }
 
+        /// Removes all users bound to a channel from both maps.
+        ///
+        /// # Invariant
+        /// `members` comes from `channel_members.remove`, which was populated by
+        /// `bind` (which inserts into both maps).  Therefore every `user` in
+        /// `members` must exist in `member_channel`.  The only way an entry could
+        /// be missing is if `unbind` already removed it — but `unbind` also
+        /// removes the user from `channel_members` (draining the channel if
+        /// empty), so it would not appear in `members`.  The `expect` below is
+        /// safe under single-threaded Coordinator execution.
         pub(super) fn drain_channel(&mut self, guild: GuildId, channel: ChannelId) -> Vec<UserId> {
             let Some(members) = self.channel_members.remove(&(guild, channel)) else {
                 return vec![];
