@@ -37,7 +37,7 @@ pub struct MemberVisual {
     pub avatar: Pixmap,
     /// The dominant color of the avatar, used for active participation states.
     pub active_color: Color,
-    /// A desaturated/faded version of the active color for muted/inactive states.
+    /// An alpha-faded version of the active color (RGB unchanged) for muted/inactive states.
     pub inactive_color: Color,
     /// A distinct color derived from the avatar for streaming/screen sharing states.
     pub streaming_color: Color,
@@ -144,11 +144,6 @@ pub(crate) fn check_avatar_size(content_length: Option<u64>, body_len: usize) ->
     Ok(())
 }
 
-/// Extracts the dominant color from a resized avatar image using k-means
-/// clustering in Lab color space.
-///
-/// Returns `Color::BLACK` if all pixels are filtered out by the lightness
-/// guard (near-black or near-white avatars).
 /// Extracts the dominant color from a resized avatar image using k-means
 /// clustering in Lab color space.
 ///
@@ -351,7 +346,7 @@ impl AssetProvider {
     }
 
     /// Fetches a member's avatar and extracts a personalized color palette.
-    pub async fn get_members_visual(
+    pub async fn get_member_visual(
         &self,
         guild_id: GuildId,
         user_id: UserId,

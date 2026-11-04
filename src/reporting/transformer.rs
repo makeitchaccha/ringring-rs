@@ -77,7 +77,7 @@ pub fn transform(
     }
 }
 
-pub fn calculate_auto_scale(start: Instant, end: Instant) -> Instant {
+pub fn calculate_timeline_end(start: Instant, end: Instant) -> Instant {
     // always be fill 80% of timeline in ongoing call
     let elapsed = end.duration_since(start);
 

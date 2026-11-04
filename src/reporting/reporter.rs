@@ -220,7 +220,7 @@ impl Reporter {
     ) -> HashMap<UserId, MemberVisual> {
         let mut visuals = HashMap::new();
         for participant in participants {
-            match asset_provider.get_members_visual(guild_id, participant.id).await {
+            match asset_provider.get_member_visual(guild_id, participant.id).await {
                 Ok(visual) => {
                     visuals.insert(participant.id, visual);
                 }
@@ -272,7 +272,7 @@ impl Reporter {
                 ),
                 transform(
                     snapshot.start.mono,
-                    transformer::calculate_auto_scale(snapshot.start.mono, now.mono),
+                    transformer::calculate_timeline_end(snapshot.start.mono, now.mono),
                     now.mono,
                     snapshot,
                     &visuals,
@@ -387,8 +387,8 @@ impl Reporter {
                                 let actual_skipped = (skipped.saturating_sub(1)) / 2;
                                 if actual_skipped > 0 {
                                     warn!(
-                                        "Reporter lagged behind, skipped {} events. Catching up.",
-                                        skipped
+                                        "Reporter lagged behind, skipped {} update pairs. Catching up.",
+                                        actual_skipped
                                     );
                                 }
                             }

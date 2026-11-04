@@ -96,8 +96,6 @@ impl SessionHandle {
 pub enum ShutdownReason {
     /// The channel has been empty for a certain duration.
     Idle,
-    /// An external command or system event requested shutdown.
-    External,
 }
 
 /// Messages sent from the coordinator to a session.
@@ -272,7 +270,7 @@ impl Session {
                                 }
 
                                 if reason == ShutdownReason::Idle
-                                    && !idle.has_expired()
+                                    && !idle.has_fired()
                                 {
                                     info!(
                                         "Shutdown requested but room is recently active. Rejecting."
@@ -477,7 +475,7 @@ impl IdleTracker {
         self.notified = false;
     }
 
-    fn has_expired(&self) -> bool {
+    fn has_fired(&self) -> bool {
         self.notified
     }
 
@@ -594,7 +592,7 @@ mod idle_tracker_tests {
         let now = Instant::now();
         tracker.start_countdown(now);
         assert!(tracker.deadline().is_some());
-        assert!(!tracker.has_expired());
+        assert!(!tracker.has_fired());
     }
 
     #[test]
@@ -603,7 +601,7 @@ mod idle_tracker_tests {
         tracker.start_countdown(Instant::now());
         tracker.abort();
         assert!(tracker.deadline().is_none());
-        assert!(!tracker.has_expired());
+        assert!(!tracker.has_fired());
     }
 
     #[test]
@@ -612,7 +610,7 @@ mod idle_tracker_tests {
         let now = Instant::now();
         tracker.start_countdown(now);
         let start = tracker.fire(now);
-        assert!(tracker.has_expired());
+        assert!(tracker.has_fired());
         assert!(tracker.deadline().is_none());
         assert_eq!(start, now);
     }
@@ -623,7 +621,7 @@ mod idle_tracker_tests {
         let now = Instant::now();
         let start = tracker.fire(now);
         assert_eq!(start, now);
-        assert!(tracker.has_expired());
+        assert!(tracker.has_fired());
     }
 
     #[test]

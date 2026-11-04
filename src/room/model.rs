@@ -62,8 +62,7 @@ impl Room {
         self.participants.iter_mut().find(|part| part.id == id)
     }
 
-    /// Handles a user connecting to the voice channel.
-    /// Routes a voice state update to the appropriate handler based on
+    /// Routes a voice state update to connect or update handling based on
     /// whether the participant is currently connected.
     pub fn handle_voice_state(
         &mut self,
