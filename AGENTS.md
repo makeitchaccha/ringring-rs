@@ -27,6 +27,17 @@ The default `jemalloc` feature fails to build on this nixos-unstable (glibc 2.44
 
 When reviewing code (via subagent or otherwise), **report findings only**. Do not modify source files during a review. Fixes should be applied separately after the user approves them.
 
+## Search Policy
+
+Do NOT run broad filesystem searches (`find /`, `find ~`, etc.). Use targeted tools:
+- `grep` for text search within the project
+- `read` for reading specific files
+- `glob` for file pattern matching within the project
+- Known paths: cargo registry is at `~/.cargo/registry/src/`, git checkouts at `~/.cargo/git/checkouts/`
+- If you need to find a type definition, use `grep -rn "pub enum Foo" ~/.cargo/registry/src/` with a specific crate name
+
+Never run `find` on `/` or `~`. It is slow and unnecessary.
+
 ## Key Design Decisions
 
 - Room is a pure state machine (Instant-injected, no I/O)
