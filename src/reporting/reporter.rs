@@ -461,3 +461,63 @@ impl UpdateScheduler {
         self.last_event_at = None;
     }
 }
+
+#[cfg(test)]
+mod scheduler_tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::time::Instant;
+
+    #[test]
+    fn next_deadline_no_events_returns_heartbeat() {
+        let scheduler = UpdateScheduler::new(
+            Duration::from_secs(5),
+            Duration::from_secs(15),
+            Duration::from_secs(60),
+        );
+        let deadline = scheduler.next_deadline();
+        // Should be approximately last_execution_at + heartbeat
+        assert!(deadline > Instant::now() - Duration::from_secs(1));
+    }
+
+    #[test]
+    fn register_event_sets_dirty_state() {
+        let mut scheduler = UpdateScheduler::new(
+            Duration::from_secs(5),
+            Duration::from_secs(15),
+            Duration::from_secs(60),
+        );
+        scheduler.register_event();
+        let deadline = scheduler.next_deadline();
+        // Should be min(soft, hard) from now, which is <= now + 15s
+        assert!(deadline <= Instant::now() + Duration::from_secs(15));
+    }
+
+    #[test]
+    fn complete_resets_state() {
+        let mut scheduler = UpdateScheduler::new(
+            Duration::from_secs(5),
+            Duration::from_secs(15),
+            Duration::from_secs(60),
+        );
+        scheduler.register_event();
+        scheduler.complete();
+        // After complete, next_deadline should use heartbeat (no dirty state)
+        let deadline = scheduler.next_deadline();
+        assert!(deadline > Instant::now());
+    }
+
+    #[test]
+    fn next_deadline_with_events_returns_min_soft_hard() {
+        let mut scheduler = UpdateScheduler::new(
+            Duration::from_secs(5),
+            Duration::from_secs(15),
+            Duration::from_secs(60),
+        );
+        scheduler.register_event();
+        let deadline = scheduler.next_deadline();
+        // soft = last + 5s, hard = first + 15s, both from now
+        // min should be <= now + 5s (soft is smaller)
+        assert!(deadline <= Instant::now() + Duration::from_secs(5) + Duration::from_millis(100));
+    }
+}

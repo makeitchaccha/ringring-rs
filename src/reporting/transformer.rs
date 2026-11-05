@@ -2,6 +2,7 @@ use crate::graphics::timeline::view::{AxisConfig, RatioSpan};
 use crate::graphics::{
     FillStyle, MajorTickConfig, StreamingSection, Timeline, TimelineEntry, VoiceSection,
 };
+use crate::graphics::timeline::view::TickKind;
 use crate::infrastructure::MemberVisual;
 use crate::reporting::RoomSnapshot;
 use crate::room::{AudioActivity, Interval};
@@ -183,4 +184,65 @@ fn convert_to_streaming_sections<'a>(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod axis_tests {
+    use super::*;
+    use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+    use std::time::Duration;
+
+    fn make_dt() -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()
+            .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+    }
+
+    #[test]
+    fn choose_suitable_axis_short_duration() {
+        let axis = choose_suitable_axis(Duration::from_secs(60));
+        let ticks = axis.generate_tick(make_dt(), make_dt() + chrono::TimeDelta::seconds(60));
+        assert!(!ticks.is_empty(), "60s duration should produce ticks");
+    }
+
+    #[test]
+    fn choose_suitable_axis_hour_duration() {
+        let axis = choose_suitable_axis(Duration::from_secs(3600));
+        let ticks = axis.generate_tick(make_dt(), make_dt() + chrono::TimeDelta::seconds(3600));
+        assert!(!ticks.is_empty(), "1h duration should produce ticks");
+        let majors = ticks.iter().filter(|t| matches!(t.kind, TickKind::Major { .. })).count();
+        assert!(majors >= 2, "1h should have at least 2 major ticks, got {}", majors);
+    }
+
+    #[test]
+    fn choose_suitable_axis_day_duration() {
+        let axis = choose_suitable_axis(Duration::from_secs(86400));
+        let ticks = axis.generate_tick(make_dt(), make_dt() + chrono::TimeDelta::seconds(86400));
+        assert!(!ticks.is_empty(), "1d duration should produce ticks");
+    }
+
+    #[test]
+    fn choose_suitable_axis_zero_duration() {
+        let axis = choose_suitable_axis(Duration::from_secs(0));
+        let ticks = axis.generate_tick(make_dt(), make_dt());
+        // Should not panic
+        let _ = ticks;
+    }
+
+    #[test]
+    fn calculate_timeline_end_extends() {
+        use tokio::time::Instant;
+        let start = Instant::now();
+        let end = calculate_timeline_end(start, start + std::time::Duration::from_secs(10));
+        assert!(end > start + std::time::Duration::from_secs(10),
+            "timeline end should extend beyond elapsed");
+    }
+
+    #[test]
+    fn calculate_timeline_end_minimum() {
+        use tokio::time::Instant;
+        let start = Instant::now();
+        let end = calculate_timeline_end(start, start);
+        assert!(end >= start + std::time::Duration::from_secs(5),
+            "timeline end should be at least 5s");
+    }
 }

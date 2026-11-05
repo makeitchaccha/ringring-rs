@@ -860,3 +860,77 @@ mod room_tests {
         assert!(p.history.screen_sharing[0].is_ongoing());
     }
 }
+
+#[cfg(test)]
+mod interval_tests {
+    use super::*;
+    use tokio::time::Instant;
+    use std::time::Duration;
+
+    #[test]
+    fn overlaps_ongoing_interval_within_range() {
+        let now = Instant::now();
+        let interval = Interval { start: now, end: None };
+        assert!(interval.overlaps(now, now + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn overlaps_ended_interval_within_range() {
+        let now = Instant::now();
+        let interval = Interval { start: now, end: Some(now + Duration::from_secs(5)) };
+        assert!(interval.overlaps(now, now + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn overlaps_returns_false_when_entirely_before_range() {
+        let now = Instant::now();
+        let interval = Interval { start: now, end: Some(now + Duration::from_secs(2)) };
+        assert!(!interval.overlaps(now + Duration::from_secs(5), now + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn overlaps_returns_false_when_entirely_after_range() {
+        let now = Instant::now();
+        let interval = Interval { start: now + Duration::from_secs(10), end: None };
+        assert!(!interval.overlaps(now, now + Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn overlaps_boundary_start_equals_range_end() {
+        let now = Instant::now();
+        let interval = Interval { start: now + Duration::from_secs(5), end: Some(now + Duration::from_secs(10)) };
+        // interval starts exactly at range_end
+        assert!(interval.overlaps(now, now + Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn overlaps_boundary_end_equals_range_start() {
+        let now = Instant::now();
+        let interval = Interval { start: now, end: Some(now + Duration::from_secs(5)) };
+        // interval ends exactly at range_start
+        assert!(interval.overlaps(now + Duration::from_secs(5), now + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn calculate_duration_ended() {
+        let now = Instant::now();
+        let interval = Interval { start: now, end: Some(now + Duration::from_secs(5)) };
+        assert_eq!(interval.calculate_duration(now + Duration::from_secs(10)), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn calculate_duration_ongoing() {
+        let now = Instant::now();
+        let interval = Interval { start: now, end: None };
+        let dur = interval.calculate_duration(now + Duration::from_secs(3));
+        assert_eq!(dur, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn end_at_already_ended_returns_error() {
+        let now = Instant::now();
+        let mut interval = Interval { start: now, end: Some(now + Duration::from_secs(5)) };
+        let result = interval.end_at(now + Duration::from_secs(10));
+        assert!(result.is_err());
+    }
+}

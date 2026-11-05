@@ -87,6 +87,37 @@ impl Moment {
     }
 }
 
+#[cfg(test)]
+mod moment_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn moment_at_shifts_mono() {
+        let m = Moment::now();
+        let new_mono = m.mono + Duration::from_secs(10);
+        let m2 = m.at(new_mono);
+        assert_eq!(m2.mono, new_mono);
+    }
+
+    #[test]
+    fn moment_at_shifts_wall_by_delta() {
+        let m = Moment::now();
+        let new_mono = m.mono + Duration::from_secs(60);
+        let m2 = m.at(new_mono);
+        let wall_delta = *m2.wall - *m.wall;
+        assert_eq!(wall_delta.num_seconds(), 60);
+    }
+
+    #[test]
+    fn moment_at_zero_delta() {
+        let m = Moment::now();
+        let m2 = m.at(m.mono);
+        assert_eq!(m2.mono, m.mono);
+        assert_eq!(*m2.wall, *m.wall);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VoiceStateFlags {
     pub is_muted: bool,
