@@ -160,19 +160,22 @@ pub enum SessionEvent {
 /// finalize (Finish) — without knowing the channel's capacity or the
 /// `PreUpdate` implementation detail. Mockable for tests.
 pub trait SessionEventSink {
-    fn clear(&self);
-    fn share(&self, room: RoomLease);
-    fn finish(&self, room: RoomLease, end: Moment);
+    /// Evict the previous `Updated` from the broadcast buffer (CoW).
+    fn evict(&self);
+    /// Publish the new room state to subscribers.
+    fn publish(&self, room: RoomLease);
+    /// Finalize the session (shutdown).
+    fn shutdown(&self, room: RoomLease, end: Moment);
 }
 
 impl SessionEventSink for broadcast::Sender<SessionEvent> {
-    fn clear(&self) {
+    fn evict(&self) {
         let _ = self.send(SessionEvent::PreUpdate);
     }
-    fn share(&self, room: RoomLease) {
+    fn publish(&self, room: RoomLease) {
         let _ = self.send(SessionEvent::Updated { room });
     }
-    fn finish(&self, room: RoomLease, end: Moment) {
+    fn shutdown(&self, room: RoomLease, end: Moment) {
         let _ = self.send(SessionEvent::Shutdown { room, end });
     }
 }
@@ -304,10 +307,10 @@ impl<S: SessionEventSink> Session<S> {
                     .. if let Some(cmd) = self.rx.recv() => {
                         match cmd {
                             SessionMessage::VoiceStateUpdate(vsu) => {
-                                self.event_sink.clear();
+                                self.event_sink.evict();
                                 match self.state.on_voice_state_update(vsu) {
                                     VoiceStateOutcome::Updated => {
-                                        self.event_sink.share(self.state.room.lease());
+                                        self.event_sink.publish(self.state.room.lease());
                                     }
                                     VoiceStateOutcome::UnknownParticipant => {
                                         warn!("room inconsistency: unknown participant on disconnect");
@@ -323,13 +326,13 @@ impl<S: SessionEventSink> Session<S> {
                                             CoordinatorInternalMessage::RejectShutdown { channel_id },
                                         ) {
                                             error!(error = %err, "Failed to send shutdown rejection");
-                                            self.event_sink.finish(self.state.room.lease(), end);
+                                            self.event_sink.shutdown(self.state.room.lease(), end);
                                             info!("Session stopped");
                                             break;
                                         }
                                     }
                                     ShutdownOutcome::Accepted => {
-                                        self.event_sink.finish(self.state.room.lease(), end);
+                                        self.event_sink.shutdown(self.state.room.lease(), end);
                                         if let Err(err) = self.coordinator_tx.send(
                                             CoordinatorInternalMessage::AcceptShutdown {
                                                 channel_id,
