@@ -134,3 +134,97 @@ impl From<&VoiceState> for VoiceStateFlags {
         }
     }
 }
+
+#[cfg(test)]
+mod voice_state_flags_tests {
+    use super::*;
+    use serenity::all::VoiceState;
+
+    fn make_state(json: &str) -> VoiceState {
+        serde_json::from_str(json).expect("valid voice state")
+    }
+
+    #[test]
+    fn muted_via_self_mute() {
+        let state = make_state(r#"{
+            "channel_id": null,
+            "deaf": false,
+            "guild_id": null,
+            "member": null,
+            "mute": false,
+            "self_deaf": false,
+            "self_mute": true,
+            "self_stream": null,
+            "self_video": false,
+            "session_id": "",
+            "suppress": false,
+            "user_id": "1",
+            "request_to_speak_timestamp": null
+        }"#);
+        let flags = VoiceStateFlags::from(&state);
+        assert!(flags.is_muted);
+    }
+
+    #[test]
+    fn deafened_via_deaf() {
+        let state = make_state(r#"{
+            "channel_id": null,
+            "deaf": true,
+            "guild_id": null,
+            "member": null,
+            "mute": false,
+            "self_deaf": false,
+            "self_mute": false,
+            "self_stream": null,
+            "self_video": false,
+            "session_id": "",
+            "suppress": false,
+            "user_id": "1",
+            "request_to_speak_timestamp": null
+        }"#);
+        let flags = VoiceStateFlags::from(&state);
+        assert!(flags.is_deafened);
+    }
+
+    #[test]
+    fn self_stream_true_sharing() {
+        let state = make_state(r#"{
+            "channel_id": null,
+            "deaf": false,
+            "guild_id": null,
+            "member": null,
+            "mute": false,
+            "self_deaf": false,
+            "self_mute": false,
+            "self_stream": true,
+            "self_video": false,
+            "session_id": "",
+            "suppress": false,
+            "user_id": "1",
+            "request_to_speak_timestamp": null
+        }"#);
+        let flags = VoiceStateFlags::from(&state);
+        assert!(flags.is_sharing_screen);
+    }
+
+    #[test]
+    fn self_stream_none_not_sharing() {
+        let state = make_state(r#"{
+            "channel_id": null,
+            "deaf": false,
+            "guild_id": null,
+            "member": null,
+            "mute": false,
+            "self_deaf": false,
+            "self_mute": false,
+            "self_stream": null,
+            "self_video": false,
+            "session_id": "",
+            "suppress": false,
+            "user_id": "1",
+            "request_to_speak_timestamp": null
+        }"#);
+        let flags = VoiceStateFlags::from(&state);
+        assert!(!flags.is_sharing_screen);
+    }
+}

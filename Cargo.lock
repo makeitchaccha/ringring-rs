@@ -2018,6 +2018,7 @@ dependencies = [
  "reqwest",
  "rustls",
  "serde",
+ "serde_json",
  "serenity",
  "thiserror 2.0.18",
  "tikv-jemallocator",

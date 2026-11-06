@@ -227,14 +227,23 @@ pub(crate) fn derive_streaming_color(active_color: Color) -> Color {
     .unwrap_or(Color::BLACK)
 }
 
-/// Processes raw avatar bytes into a `MemberVisual`.
+/// Decodes raw avatar bytes into a `DynamicImage`.
 ///
-/// Handles image decoding, resizing, color extraction, and pixmap construction.
-/// This is a pure-ish function (no I/O) that can be called from `spawn_blocking`.
-pub(crate) fn process_avatar(avatar_bytes: Vec<u8>, avatar_size: u32) -> Result<MemberVisual, AssetError> {
+/// Rejects invalid input (decode failure).
+pub(crate) fn decode_avatar(avatar_bytes: Vec<u8>) -> Result<image::DynamicImage, AssetError> {
     let image_reader = ImageReader::new(BufReader::new(Cursor::new(avatar_bytes)))
         .with_guessed_format()?;
     let decoded = image_reader.decode()?;
+    Ok(decoded)
+}
+
+/// Renders a decoded avatar image into a `MemberVisual`.
+///
+/// Processing (resize, color extract, pixmap). Only PixmapConstruction can fail.
+pub(crate) fn render_avatar(
+    decoded: image::DynamicImage,
+    avatar_size: u32,
+) -> Result<MemberVisual, AssetError> {
     let resized = imageops::resize(&decoded, avatar_size, avatar_size, FilterType::Lanczos3);
 
     let (active_color, inactive_color, streaming_color) = match extract_active_color(&resized) {
@@ -261,6 +270,15 @@ pub(crate) fn process_avatar(avatar_bytes: Vec<u8>, avatar_size: u32) -> Result<
         inactive_color,
         streaming_color,
     })
+}
+
+/// Processes raw avatar bytes into a `MemberVisual`.
+///
+/// Handles image decoding, resizing, color extraction, and pixmap construction.
+/// This is a pure-ish function (no I/O) that can be called from `spawn_blocking`.
+pub(crate) fn process_avatar(avatar_bytes: Vec<u8>, avatar_size: u32) -> Result<MemberVisual, AssetError> {
+    let decoded = decode_avatar(avatar_bytes)?;
+    render_avatar(decoded, avatar_size)
 }
 
 #[cfg(test)]
@@ -320,6 +338,34 @@ mod asset_tests {
         let v1 = MemberVisual::fallback(UserId::new(42));
         let v2 = MemberVisual::fallback(UserId::new(42));
         assert_eq!(v1.active_color, v2.active_color);
+    }
+
+    #[test]
+    fn decode_avatar_rejects_garbage() {
+        assert!(decode_avatar(vec![0, 1, 2, 3, 4]).is_err());
+    }
+
+    #[test]
+    fn decode_avatar_accepts_png() {
+        // create red image
+        let mut buf = image::ImageBuffer::new(4, 4);
+        for p in buf.pixels_mut() {
+            *p = image::Rgba([255, 0, 0, 255]);
+        }
+        let img = image::DynamicImage::ImageRgba8(buf);
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut cursor, image::ImageFormat::Png).unwrap();
+        let bytes = cursor.into_inner();
+        assert!(decode_avatar(bytes).is_ok());
+    }
+
+    #[test]
+    fn render_avatar_produces_correct_size() {
+        let buf = image::ImageBuffer::new(4, 4);
+        let decoded = image::DynamicImage::ImageRgba8(buf);
+        let visual = render_avatar(decoded, 2).unwrap();
+        assert_eq!(visual.avatar.width(), 2);
+        assert_eq!(visual.avatar.height(), 2);
     }
 }
 

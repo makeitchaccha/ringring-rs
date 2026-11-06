@@ -2,7 +2,6 @@ use crate::graphics::timeline::view::{AxisConfig, RatioSpan};
 use crate::graphics::{
     FillStyle, MajorTickConfig, StreamingSection, Timeline, TimelineEntry, VoiceSection,
 };
-use crate::graphics::timeline::view::TickKind;
 use crate::infrastructure::MemberVisual;
 use crate::reporting::RoomSnapshot;
 use crate::room::{AudioActivity, Interval};
@@ -187,8 +186,111 @@ fn convert_to_streaming_sections<'a>(
 }
 
 #[cfg(test)]
+mod transform_tests {
+    use super::*;
+    use crate::reporting::{HistorySnapshot, ParticipantSnapshot, RoomSnapshot};
+    use crate::room::{AudioActivity, Interval, Moment};
+    use chrono_tz::Tz;
+    use serenity::all::{ChannelId, GuildId, Timestamp, UserId};
+    use std::collections::HashMap;
+    use tokio::time::Instant;
+
+    #[test]
+    fn transform_empty_participants() {
+        let base = Instant::now();
+        let start = Moment::new(Timestamp::now(), base);
+        let room = RoomSnapshot {
+            start,
+            guild_id: GuildId::new(1),
+            channel_id: ChannelId::new(1),
+            participants: vec![],
+        };
+        let from = base;
+        let to = base + std::time::Duration::from_secs(10);
+        let now = base;
+        let visuals = HashMap::new();
+        let tz: Tz = "UTC".parse().unwrap();
+        let timeline = transform(from, to, now, &room, &visuals, tz);
+        assert!(timeline.entries.is_empty());
+    }
+
+    #[test]
+    fn transform_filters_outside_range() {
+        let base = Instant::now();
+        let start = Moment::new(Timestamp::now(), base);
+        // activity entirely after [from,to]
+        let from = base;
+        let to = base + std::time::Duration::from_secs(10);
+        let act_start = base + std::time::Duration::from_secs(20);
+        let act_end = base + std::time::Duration::from_secs(30);
+        let participant = ParticipantSnapshot {
+            id: UserId::new(1),
+            history: HistorySnapshot {
+                audio: vec![AudioActivity {
+                    interval: Interval {
+                        start: act_start,
+                        end: Some(act_end),
+                    },
+                    muted: false,
+                    deafened: false,
+                }],
+                screen_sharing: vec![],
+            },
+        };
+        let room = RoomSnapshot {
+            start,
+            guild_id: GuildId::new(1),
+            channel_id: ChannelId::new(1),
+            participants: vec![participant],
+        };
+        let now = base;
+        let visuals = HashMap::new();
+        let tz: Tz = "UTC".parse().unwrap();
+        let timeline = transform(from, to, now, &room, &visuals, tz);
+        assert!(timeline.entries.is_empty());
+    }
+
+    #[test]
+    fn transform_includes_overlapping_activity() {
+        let base = Instant::now();
+        let start = Moment::new(Timestamp::now(), base);
+        let from = base;
+        let to = base + std::time::Duration::from_secs(10);
+        let act_start = base + std::time::Duration::from_secs(5);
+        let act_end = base + std::time::Duration::from_secs(15);
+        let participant = ParticipantSnapshot {
+            id: UserId::new(1),
+            history: HistorySnapshot {
+                audio: vec![AudioActivity {
+                    interval: Interval {
+                        start: act_start,
+                        end: Some(act_end),
+                    },
+                    muted: false,
+                    deafened: false,
+                }],
+                screen_sharing: vec![],
+            },
+        };
+        let room = RoomSnapshot {
+            start,
+            guild_id: GuildId::new(1),
+            channel_id: ChannelId::new(1),
+            participants: vec![participant],
+        };
+        let now = base + std::time::Duration::from_secs(15);
+        let visuals = HashMap::new();
+        let tz: Tz = "UTC".parse().unwrap();
+        let timeline = transform(from, to, now, &room, &visuals, tz);
+        assert_eq!(timeline.entries.len(), 1);
+        assert!(!timeline.entries[0].voice_sections.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod axis_tests {
     use super::*;
+    use crate::graphics::timeline::view::TickKind;
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
     use std::time::Duration;
 
