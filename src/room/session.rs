@@ -199,11 +199,18 @@ impl SessionState {
         self.idle.deadline()
     }
 
+    pub fn idle_has_fired(&self) -> bool {
+        self.idle.has_fired()
+    }
+
     /// Domain outcome of a voice state update.
     pub fn on_voice_state_update(&mut self, vsu: VoiceStateUpdate) -> VoiceStateOutcome {
         if let Some(flags) = vsu.flags {
+            let was_connected = self.room.is_connected(vsu.user_id);
             self.room.handle_voice_state(vsu.now, vsu.user_id, flags);
-            self.idle.abort();
+            if !was_connected {
+                self.idle.abort();
+            }
             VoiceStateOutcome::Updated
         } else {
             match self.room.handle_disconnect(vsu.now, vsu.user_id) {
@@ -222,7 +229,6 @@ impl SessionState {
     pub fn on_shutdown_requested(
         &mut self,
         reason: ShutdownReason,
-        _end: Moment,
     ) -> ShutdownOutcome {
         if !self.room.is_empty() {
             return ShutdownOutcome::Rejected;
@@ -311,13 +317,15 @@ impl<S: SessionEventSink> Session<S> {
                             SessionMessage::RequestShutdown { reason, end } => {
                                 let channel_id = self.state.room.channel_id;
                                 let guild_id = self.state.room.guild_id;
-                                match self.state.on_shutdown_requested(reason, end) {
+                                match self.state.on_shutdown_requested(reason) {
                                     ShutdownOutcome::Rejected => {
                                         if let Err(err) = self.coordinator_tx.send(
                                             CoordinatorInternalMessage::RejectShutdown { channel_id },
                                         ) {
                                             error!(error = %err, "Failed to send shutdown rejection");
                                             self.event_sink.finish(self.state.room.lease(), end);
+                                            info!("Session stopped");
+                                            break;
                                         }
                                     }
                                     ShutdownOutcome::Accepted => {
@@ -660,7 +668,7 @@ mod session_state_tests {
             flags: Some(VoiceStateFlags { is_muted: false, is_deafened: false, is_sharing_screen: false }),
         });
         assert!(state.idle_deadline().is_none());
-        assert!(!state.idle.has_fired());
+        assert!(!state.idle_has_fired());
     }
 
     #[test]
@@ -699,14 +707,14 @@ mod session_state_tests {
             user_id: UserId::new(1),
             flags: Some(VoiceStateFlags { is_muted: false, is_deafened: false, is_sharing_screen: false }),
         });
-        let outcome = state.on_shutdown_requested(ShutdownReason::Idle, Moment::now());
+        let outcome = state.on_shutdown_requested(ShutdownReason::Idle);
         assert_eq!(outcome, ShutdownOutcome::Rejected);
     }
 
     #[test]
     fn request_shutdown_empty_not_fired_rejects() {
         let mut state = make_state();
-        let outcome = state.on_shutdown_requested(ShutdownReason::Idle, Moment::now());
+        let outcome = state.on_shutdown_requested(ShutdownReason::Idle);
         assert_eq!(outcome, ShutdownOutcome::Rejected);
     }
 
@@ -714,7 +722,7 @@ mod session_state_tests {
     fn request_shutdown_empty_fired_accepts() {
         let mut state = make_state();
         state.on_idle_timeout(Instant::now());
-        let outcome = state.on_shutdown_requested(ShutdownReason::Idle, Moment::now());
+        let outcome = state.on_shutdown_requested(ShutdownReason::Idle);
         assert_eq!(outcome, ShutdownOutcome::Accepted);
     }
 
