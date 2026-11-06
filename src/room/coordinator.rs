@@ -88,7 +88,7 @@ pub enum CoordinatorInternalMessage {
         since: Moment,
     },
     /// Sent by a session to confirm it has successfully shut down.
-    AcceptShutdown { channel_id: ChannelId, room: Room },
+    AcceptShutdown { channel_id: ChannelId, guild_id: GuildId },
     /// Sent by a session to reject a shutdown request (e.g., because someone re-joined).
     RejectShutdown { channel_id: ChannelId },
 }
@@ -227,7 +227,7 @@ impl Coordinator {
                                     self.sessions.remove(&channel_id);
                                 }
                             }
-                            CoordinatorInternalMessage::AcceptShutdown { channel_id, room } => {
+                            CoordinatorInternalMessage::AcceptShutdown { channel_id, guild_id } => {
                                 let Some(handle) = self.sessions.get_mut(&channel_id) else {
                                     warn!(
                                         "Coordinator received accept-shutdown, so just ignore the message."
@@ -242,8 +242,8 @@ impl Coordinator {
                                     let tx = Self::spawn_session(
                                         &self.event_tx,
                                         id_generator.next_id(),
-                                        room.guild_id,
-                                        room.channel_id,
+                                        guild_id,
+                                        channel_id,
                                         &internal_tx,
                                         self.idle_timeout,
                                     );
@@ -254,7 +254,7 @@ impl Coordinator {
                                     }
                                 } else {
                                     self.sessions.remove(&channel_id);
-                                    registry.drain_channel(room.guild_id, channel_id);
+                                    registry.drain_channel(guild_id, channel_id);
                                 }
                             }
 

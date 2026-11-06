@@ -92,7 +92,7 @@ impl SessionHandle {
 }
 
 /// Reasons why a session might be requested to shut down.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ShutdownReason {
     /// The channel has been empty for a certain duration.
     Idle,
@@ -121,17 +121,17 @@ pub enum SessionEvent {
     ///
     /// # Copy-on-Write optimization
     ///
-    /// `Room` stores activity history behind `Arc<Vec<...>>`.  When a reporter
+    /// `Room` stores activity history behind `Arc<Vec<...>>`. When a reporter
     /// is slow, the previous [`Updated`](SessionEvent::Updated) message (which
     /// carries a `RoomLease` with an `Arc` clone) may still sit in the
-    /// broadcast channel's internal buffer.  While that `Arc` is alive, the
+    /// broadcast channel's internal buffer. While that `Arc` is alive, the
     /// Room task's `Arc::make_mut` must clone the whole vector on every
     /// update — O(n) instead of O(1).
     ///
-    /// `PreUpdate` is sent **before** the state mutation.  Because the
+    /// `PreUpdate` is sent **before** the state mutation. Because the
     /// broadcast channel has capacity 1, sending `PreUpdate` (which carries no
     /// `Arc`) pushes the previous `Updated` out of the buffer, dropping its
-    /// `Arc` reference.  By the time the Room task mutates, the `Arc`'s
+    /// `Arc` reference. By the time the Room task mutates, the `Arc`'s
     /// strong count is 1 and `make_mut` works in place.
     ///
     /// The Reporter does not need to handle `PreUpdate` explicitly — the
@@ -139,13 +139,13 @@ pub enum SessionEvent {
     ///
     /// # Secondary use: Lag detection
     ///
-    /// `PreUpdate` and `Updated` are sent as a pair.  When the Reporter
+    /// `PreUpdate` and `Updated` are sent as a pair. When the Reporter
     /// lags, the broadcast channel reports `Lagged(n)`; dividing by 2
     /// (`(n - 1) / 2`) estimates how many update pairs were skipped.
     PreUpdate,
     /// The session's internal state (room model) has been updated.
     ///
-    /// Carries a [`RoomLease`] whose history vectors are behind `Arc`.  The
+    /// Carries a [`RoomLease`] whose history vectors are behind `Arc`. The
     /// Reporter should convert to owned data (`RoomSnapshot`) promptly so the
     /// `Arc` reference is released and the Room task can mutate in place.
     Updated { room: RoomLease },
@@ -153,32 +153,129 @@ pub enum SessionEvent {
     Shutdown { room: RoomLease, end: Moment },
 }
 
-/// An actor-like task that manages the state of a single voice channel activity.
+/// Sender side of session events.
 ///
-/// `Session` tracks who is in the room, their voice states, and records the
-/// history of these activities. It also manages its own idle timeout.
-pub struct Session {
-    room: Room,
-    rx: mpsc::UnboundedReceiver<SessionMessage>,
-    coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
-    event_tx: broadcast::Sender<SessionEvent>,
-    idle_timeout: Duration,
+/// Abstracts the broadcast channel so the driver can evict the previous
+/// `Updated` (Clear) before mutating, share a new lease (Share), or
+/// finalize (Finish) — without knowing the channel's capacity or the
+/// `PreUpdate` implementation detail. Mockable for tests.
+pub trait SessionEventSink {
+    fn clear(&self);
+    fn share(&self, room: RoomLease);
+    fn finish(&self, room: RoomLease, end: Moment);
 }
 
-impl Session {
+impl SessionEventSink for broadcast::Sender<SessionEvent> {
+    fn clear(&self) {
+        let _ = self.send(SessionEvent::PreUpdate);
+    }
+    fn share(&self, room: RoomLease) {
+        let _ = self.send(SessionEvent::Updated { room });
+    }
+    fn finish(&self, room: RoomLease, end: Moment) {
+        let _ = self.send(SessionEvent::Shutdown { room, end });
+    }
+}
+
+/// Pure state for a single voice channel session.
+///
+/// Holds the Room and idle tracking state. The state machine mutates state
+/// and returns domain outcomes; it performs no I/O. The driver (Session::run)
+/// owns all I/O and maps outcomes to SessionEvent / CoordinatorInternalMessage.
+pub struct SessionState {
+    room: Room,
+    idle: IdleTracker,
+}
+
+impl SessionState {
+    pub fn new(room: Room, idle_timeout: Duration) -> Self {
+        Self {
+            room,
+            idle: IdleTracker::new(idle_timeout),
+        }
+    }
+
+    pub fn idle_deadline(&self) -> Option<Instant> {
+        self.idle.deadline()
+    }
+
+    /// Domain outcome of a voice state update.
+    pub fn on_voice_state_update(&mut self, vsu: VoiceStateUpdate) -> VoiceStateOutcome {
+        if let Some(flags) = vsu.flags {
+            self.room.handle_voice_state(vsu.now, vsu.user_id, flags);
+            self.idle.abort();
+            VoiceStateOutcome::Updated
+        } else {
+            match self.room.handle_disconnect(vsu.now, vsu.user_id) {
+                Ok(status) => {
+                    if status == RoomStatus::Empty {
+                        self.idle.start_countdown(vsu.now);
+                    }
+                    VoiceStateOutcome::Updated
+                }
+                Err(_) => VoiceStateOutcome::UnknownParticipant,
+            }
+        }
+    }
+
+    /// Domain outcome of a shutdown request.
+    pub fn on_shutdown_requested(
+        &mut self,
+        reason: ShutdownReason,
+        _end: Moment,
+    ) -> ShutdownOutcome {
+        if !self.room.is_empty() {
+            return ShutdownOutcome::Rejected;
+        }
+        if reason == ShutdownReason::Idle && !self.idle.has_fired() {
+            return ShutdownOutcome::Rejected;
+        }
+        ShutdownOutcome::Accepted
+    }
+
+    /// Fires the idle timeout and returns the start instant for the Idle message.
+    pub fn on_idle_timeout(&mut self, now: Instant) -> Instant {
+        self.idle.fire(now)
+    }
+}
+
+/// Domain outcome of a voice state update.
+#[derive(Debug, PartialEq, Eq)]
+pub enum VoiceStateOutcome {
+    /// State changed; subscribers should be notified.
+    Updated,
+    /// Disconnect for an unknown participant; no notification needed.
+    UnknownParticipant,
+}
+
+/// Domain outcome of a shutdown request.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ShutdownOutcome {
+    Rejected,
+    Accepted,
+}
+
+/// An actor-like task that manages the state of a single voice channel activity.
+pub struct Session<S: SessionEventSink> {
+    state: SessionState,
+    rx: mpsc::UnboundedReceiver<SessionMessage>,
+    coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
+    event_sink: S,
+}
+
+impl<S: SessionEventSink> Session<S> {
     pub fn new(
         room: Room,
         rx: mpsc::UnboundedReceiver<SessionMessage>,
         coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
-        event_tx: broadcast::Sender<SessionEvent>,
+        event_sink: S,
         idle_timeout: Duration,
-    ) -> Session {
+    ) -> Session<S> {
         Session {
-            room,
+            state: SessionState::new(room, idle_timeout),
             rx,
             coordinator_tx,
-            event_tx,
-            idle_timeout,
+            event_sink,
         }
     }
 
@@ -186,145 +283,77 @@ impl Session {
         name = "session",
         skip(self),
         fields(
-            channel = %self.room.channel_id,
-            id = %self.room.id,
+            channel = %self.state.room.channel_id,
+            id = %self.state.room.id,
         )
     )]
     pub async fn run(mut self) {
         info!("Session started");
 
-        let mut idle = IdleTracker::new(self.idle_timeout);
-
         loop {
+            let idle_deadline = self.state.idle_deadline();
             tokio_select!(
                 biased,
                 match .. {
                     .. if let Some(cmd) = self.rx.recv() => {
                         match cmd {
-                            SessionMessage::VoiceStateUpdate(voice_state_update) => {
-                                let Some(flags) = voice_state_update.flags else {
-                                    info!(user_id = %voice_state_update.user_id, "Participant disconnected");
-                                    let _ = self.event_tx.send(SessionEvent::PreUpdate);
-                                    let status = match self.room.handle_disconnect(
-                                        voice_state_update.now,
-                                        voice_state_update.user_id,
-                                    ) {
-                                        Ok(status) => status,
-                                        Err(error) => {
-                                            warn!(
-                                                ?error,
-                                                "room inconsistency was detected. just ignored the update."
-                                            );
-                                            continue;
-                                        }
-                                    };
-                                    if status == RoomStatus::Empty {
-                                        info!("Room is now empty, starting idle countdown");
-                                        idle.start_countdown(voice_state_update.now);
+                            SessionMessage::VoiceStateUpdate(vsu) => {
+                                self.event_sink.clear();
+                                match self.state.on_voice_state_update(vsu) {
+                                    VoiceStateOutcome::Updated => {
+                                        self.event_sink.share(self.state.room.lease());
                                     }
-                                    let _ = self.event_tx.send(SessionEvent::Updated {
-                                        room: self.room.lease(),
-                                    });
-
-                                    continue;
-                                };
-
-                                let was_connected = self.room.is_connected(voice_state_update.user_id);
-                                if was_connected {
-                                    info!(user_id = %voice_state_update.user_id, flags = ?voice_state_update.flags, "Participant state updated");
-                                } else {
-                                    info!(user_id = %voice_state_update.user_id, "Participant connected");
+                                    VoiceStateOutcome::UnknownParticipant => {
+                                        warn!("room inconsistency: unknown participant on disconnect");
+                                    }
                                 }
-                                let _ = self.event_tx.send(SessionEvent::PreUpdate);
-                                self.room.handle_voice_state(
-                                    voice_state_update.now,
-                                    voice_state_update.user_id,
-                                    flags,
-                                );
-                                if !was_connected {
-                                    idle.abort();
-                                }
-                                let _ = self.event_tx.send(SessionEvent::Updated {
-                                    room: self.room.lease(),
-                                });
                             }
                             SessionMessage::RequestShutdown { reason, end } => {
-                                if !self.room.is_empty() {
-                                    warn!(
-                                        ?reason,
-                                        "Shutdown requested but room is not empty. Rejecting."
-                                    );
-                                    if let Err(err) = self.coordinator_tx.send(
-                                        CoordinatorInternalMessage::RejectShutdown {
-                                            channel_id: self.room.channel_id,
-                                        },
-                                    ) {
-                                        error!(error = %err, "Failed to send shutdown rejection");
-                                        let _ = self.event_tx.send(SessionEvent::Shutdown {
-                                            room: self.room.lease(),
-                                            end,
-                                        });
+                                let channel_id = self.state.room.channel_id;
+                                let guild_id = self.state.room.guild_id;
+                                match self.state.on_shutdown_requested(reason, end) {
+                                    ShutdownOutcome::Rejected => {
+                                        if let Err(err) = self.coordinator_tx.send(
+                                            CoordinatorInternalMessage::RejectShutdown { channel_id },
+                                        ) {
+                                            error!(error = %err, "Failed to send shutdown rejection");
+                                            self.event_sink.finish(self.state.room.lease(), end);
+                                        }
+                                    }
+                                    ShutdownOutcome::Accepted => {
+                                        self.event_sink.finish(self.state.room.lease(), end);
+                                        if let Err(err) = self.coordinator_tx.send(
+                                            CoordinatorInternalMessage::AcceptShutdown {
+                                                channel_id,
+                                                guild_id,
+                                            },
+                                        ) {
+                                            error!(error = %err, "Failed to send shutdown acceptance");
+                                        }
+                                        info!("Session stopped");
                                         break;
                                     }
-                                    continue;
                                 }
-
-                                if reason == ShutdownReason::Idle
-                                    && !idle.has_fired()
-                                {
-                                    info!(
-                                        "Shutdown requested but room is recently active. Rejecting."
-                                    );
-                                    if let Err(err) = self.coordinator_tx.send(
-                                        CoordinatorInternalMessage::RejectShutdown {
-                                            channel_id: self.room.channel_id,
-                                        },
-                                    ) {
-                                        error!(error = %err, "Failed to send shutdown rejection");
-                                        let _ = self.event_tx.send(SessionEvent::Shutdown {
-                                            room: self.room.lease(),
-                                            end,
-                                        });
-                                        break;
-                                    }
-                                    continue;
-                                }
-
-                                let _ = self.event_tx.send(SessionEvent::Shutdown {
-                                    room: self.room.lease(),
-                                    end,
-                                });
-                                if let Err(err) = self.coordinator_tx.send(
-                                    CoordinatorInternalMessage::AcceptShutdown {
-                                        channel_id: self.room.channel_id,
-                                        room: self.room,
-                                    },
-                                ) {
-                                    error!(error = %err, "Failed to send shutdown acceptance");
-                                }
-
-                                info!("Session stopped");
-                                break;
                             }
                         }
                     }
 
                     .. if let _ = async {
-                        match idle.deadline() {
+                        match idle_deadline {
                             Some(d) => tokio::time::sleep_until(d).await,
                             None => std::future::pending().await,
                         }
                     } => {
-                        if idle.deadline().is_some() {
-                            let start = idle.fire(Instant::now());
-                            info!(idle_since = ?start, "Detected idle, starting idle-shutdown sequence...");
+                        if idle_deadline.is_some() {
+                            info!("Detected idle, starting idle-shutdown sequence...");
+                            let start = self.state.on_idle_timeout(tokio::time::Instant::now());
+                            let channel_id = self.state.room.channel_id;
+                            let since = self.state.room.start.at(start);
                             if let Err(err) = self.coordinator_tx.send(
-                                CoordinatorInternalMessage::Idle {
-                                    channel_id: self.room.channel_id,
-                                    since: self.room.start.at(start),
-                                },
+                                CoordinatorInternalMessage::Idle { channel_id, since },
                             ) {
                                 error!(error = %err, "Failed to send idle notification");
+                                info!("Session stopped");
                                 break;
                             }
                         }
@@ -335,7 +364,55 @@ impl Session {
     }
 }
 
+struct IdleTracker {
+    start: Option<Instant>,
+    deadline: Option<Instant>,
+    notified: bool,
+    timeout: Duration,
+}
 
+impl IdleTracker {
+    fn new(timeout: Duration) -> Self {
+        Self {
+            start: None,
+            deadline: None,
+            notified: false,
+            timeout,
+        }
+    }
+
+    fn start_countdown(&mut self, now: Instant) {
+        self.start = Some(now);
+        self.deadline = Some(now + self.timeout);
+        self.notified = false;
+    }
+
+    fn abort(&mut self) {
+        self.start = None;
+        self.deadline = None;
+        self.notified = false;
+    }
+
+    fn has_fired(&self) -> bool {
+        self.notified
+    }
+
+    fn deadline(&self) -> Option<Instant> {
+        if self.notified {
+            None
+        } else {
+            self.deadline
+        }
+    }
+
+    /// Marks the countdown as fired: records the start time and clears the deadline.
+    fn fire(&mut self, now: Instant) -> Instant {
+        let start = self.start.take().unwrap_or(now);
+        self.notified = true;
+        self.deadline = None;
+        start
+    }
+}
 
 #[cfg(test)]
 mod session_smoke_tests {
@@ -446,56 +523,6 @@ mod session_smoke_tests {
     }
 }
 
-struct IdleTracker {
-    start: Option<Instant>,
-    deadline: Option<Instant>,
-    notified: bool,
-    timeout: Duration,
-}
-
-impl IdleTracker {
-    fn new(timeout: Duration) -> Self {
-        Self {
-            start: None,
-            deadline: None,
-            notified: false,
-            timeout,
-        }
-    }
-
-    fn start_countdown(&mut self, now: Instant) {
-        self.start = Some(now);
-        self.deadline = Some(now + self.timeout);
-        self.notified = false;
-    }
-
-    fn abort(&mut self) {
-        self.start = None;
-        self.deadline = None;
-        self.notified = false;
-    }
-
-    fn has_fired(&self) -> bool {
-        self.notified
-    }
-
-    fn deadline(&self) -> Option<Instant> {
-        if self.notified {
-            None
-        } else {
-            self.deadline
-        }
-    }
-
-    /// Marks the countdown as fired: records the start time and clears the deadline.
-    fn fire(&mut self, now: Instant) -> Instant {
-        let start = self.start.take().unwrap_or(now);
-        self.notified = true;
-        self.deadline = None;
-        start
-    }
-}
-
 #[cfg(test)]
 mod session_handle_tests {
     use super::*;
@@ -541,7 +568,7 @@ mod session_handle_tests {
             flags: None,
         })).unwrap();
         handle.resume_delivery().unwrap();
-        assert!(rx.try_recv().is_ok(), "buffered message should be flushed");
+        assert!(rx.try_recv().is_ok(), "buffered message should be delivered");
         assert!(!handle.has_waiting_events());
     }
 
@@ -578,6 +605,136 @@ mod session_handle_tests {
         assert!(handle.is_suspended());
         handle.resume_delivery().unwrap();
         assert!(!handle.is_suspended());
+    }
+}
+
+#[cfg(test)]
+mod session_state_tests {
+    use super::*;
+    use serenity::all::{ChannelId, GuildId, UserId};
+    use tokio::time::Instant;
+
+    fn make_room() -> Room {
+        use crate::room::RoomIdGenerator;
+        let mut id_gen = RoomIdGenerator::new();
+        Room::new(id_gen.next_id(), GuildId::new(1), ChannelId::new(2), Moment::now())
+    }
+
+    fn make_state() -> SessionState {
+        SessionState::new(make_room(), Duration::from_secs(60))
+    }
+
+    #[test]
+    fn connect_emits_updated() {
+        let mut state = make_state();
+        let outcome = state.on_voice_state_update(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: Some(VoiceStateFlags {
+                is_muted: false,
+                is_deafened: false,
+                is_sharing_screen: false,
+            }),
+        });
+        assert_eq!(outcome, VoiceStateOutcome::Updated);
+        assert_eq!(state.room.participants.len(), 1);
+    }
+
+    #[test]
+    fn connect_aborts_idle() {
+        let mut state = make_state();
+        state.on_voice_state_update(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: Some(VoiceStateFlags { is_muted: false, is_deafened: false, is_sharing_screen: false }),
+        });
+        state.on_voice_state_update(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: None,
+        });
+        assert!(state.idle_deadline().is_some());
+        state.on_voice_state_update(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: Some(VoiceStateFlags { is_muted: false, is_deafened: false, is_sharing_screen: false }),
+        });
+        assert!(state.idle_deadline().is_none());
+        assert!(!state.idle.has_fired());
+    }
+
+    #[test]
+    fn disconnect_empty_starts_idle() {
+        let mut state = make_state();
+        state.on_voice_state_update(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: Some(VoiceStateFlags { is_muted: false, is_deafened: false, is_sharing_screen: false }),
+        });
+        let outcome = state.on_voice_state_update(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: None,
+        });
+        assert_eq!(outcome, VoiceStateOutcome::Updated);
+        assert!(state.idle_deadline().is_some());
+    }
+
+    #[test]
+    fn disconnect_unknown_returns_unknown_participant() {
+        let mut state = make_state();
+        let outcome = state.on_voice_state_update(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(99),
+            flags: None,
+        });
+        assert_eq!(outcome, VoiceStateOutcome::UnknownParticipant);
+    }
+
+    #[test]
+    fn request_shutdown_non_empty_rejects() {
+        let mut state = make_state();
+        state.on_voice_state_update(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: Some(VoiceStateFlags { is_muted: false, is_deafened: false, is_sharing_screen: false }),
+        });
+        let outcome = state.on_shutdown_requested(ShutdownReason::Idle, Moment::now());
+        assert_eq!(outcome, ShutdownOutcome::Rejected);
+    }
+
+    #[test]
+    fn request_shutdown_empty_not_fired_rejects() {
+        let mut state = make_state();
+        let outcome = state.on_shutdown_requested(ShutdownReason::Idle, Moment::now());
+        assert_eq!(outcome, ShutdownOutcome::Rejected);
+    }
+
+    #[test]
+    fn request_shutdown_empty_fired_accepts() {
+        let mut state = make_state();
+        state.on_idle_timeout(Instant::now());
+        let outcome = state.on_shutdown_requested(ShutdownReason::Idle, Moment::now());
+        assert_eq!(outcome, ShutdownOutcome::Accepted);
+    }
+
+    #[test]
+    fn idle_timeout_returns_start_instant() {
+        let mut state = make_state();
+        // connect then disconnect to reach empty
+        state.on_voice_state_update(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: Some(VoiceStateFlags { is_muted: false, is_deafened: false, is_sharing_screen: false }),
+        });
+        state.on_voice_state_update(VoiceStateUpdate {
+            now: Instant::now(),
+            user_id: UserId::new(1),
+            flags: None,
+        });
+        let start = state.on_idle_timeout(Instant::now());
+        // state.room.start.at(start) should be a valid Moment
+        let _ = state.room.start.at(start);
     }
 }
 
