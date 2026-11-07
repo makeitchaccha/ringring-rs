@@ -147,6 +147,22 @@ impl Coordinator {
         (CoordinatorHandle::new(tx), event_rx)
     }
 
+    /// Spawns a new `Session` for `channel_id` and announces it via
+    /// `CoordinatorEvent::Published`.
+    ///
+    /// # Reconnect semantics
+    /// This is called both for genuinely new channels and when an idle session
+    /// shuts down while events were buffered during suspension (see
+    /// `AcceptShutdown` with waiting events). In the reconnect case a *new*
+    /// `Room` (with a fresh `Moment::now()`) is created and the buffered
+    /// events — whose `Instant`s originate from the previous session — are
+    /// replayed into it. The rendering layer clamps activity starts with
+    /// `saturating_duration_since`, so out-of-range instants are harmless.
+    ///
+    /// A new `Published` event is emitted for every spawn, so the `Publisher`
+    /// creates a fresh reporter with a new `ReportAnchor` (a new Discord
+    /// message). This is distinct from the previous session's final report
+    /// message; the two do not overwrite each other.
     fn spawn_session(
         event_tx: &mpsc::UnboundedSender<CoordinatorEvent>,
         id: RoomId,
@@ -236,6 +252,9 @@ impl Coordinator {
                                 };
 
                                 if handle.has_waiting_events() {
+                                    // Reconnect path: spawns a new session (and thus a new
+                                    // Published/report) and replays buffered events.
+                                    // See spawn_session docs for reconnect semantics.
                                     info!(
                                         "Handle has waiting events. Creating new session and reconnecting handle..."
                                     );
@@ -529,6 +548,20 @@ mod registry {
     }
 
     use super::*;
+    /// Tracks which channel each (guild, user) is currently in.
+    ///
+    /// # Consistency model
+    /// The registry is updated synchronously at event-ingress time (in the
+    /// `Track`/`Notify` arms of `Coordinator::run`), *before* the
+    /// corresponding `SessionMessage` is processed by the session (which may
+    /// be buffered during suspension and replayed later). The two maps are
+    /// kept in sync by `bind`/`unbind`/`drain_channel` within a single
+    /// coordinator task, with no await points between updates, so the
+    /// `.expect` invariants are structurally guaranteed rather than
+    /// assumption-based.
+    ///
+    /// This registry reflects Discord's user->channel routing truth and is
+    /// intentionally separate from a session's `Room` activity state.
     pub(super) struct MemberRegistry {
         member_channel: HashMap<(GuildId, UserId), ChannelId>,
         channel_members: HashMap<(GuildId, ChannelId), Vec<UserId>>,

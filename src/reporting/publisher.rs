@@ -37,6 +37,14 @@ impl Publisher {
         }
     }
 
+    /// Consumes coordinator events.
+    ///
+    /// Each `CoordinatorEvent::Published` spawns a fresh `Reporter` per
+    /// subscription, with its own `ReportAnchor` (a new Discord message).
+    /// This includes reconnects: when an idle session shuts down while events
+    /// were buffered, the coordinator spawns a new session which emits a new
+    /// `Published`, producing a new report message rather than continuing the
+    /// previous session's final one.
     pub async fn run(mut self) {
         while let Some(event) = self.event_rx.recv().await {
             match event {

@@ -210,7 +210,14 @@ impl SessionState {
     pub fn on_voice_state_update(&mut self, vsu: VoiceStateUpdate) -> VoiceStateOutcome {
         if let Some(flags) = vsu.flags {
             let was_connected = self.room.is_connected(vsu.user_id);
-            self.room.handle_voice_state(vsu.now, vsu.user_id, flags);
+            if let Err(err) = self.room.handle_voice_state(vsu.now, vsu.user_id, flags) {
+                tracing::warn!(
+                    error = %err,
+                    user_id = %vsu.user_id,
+                    "room inconsistency while applying voice state update"
+                );
+                return VoiceStateOutcome::Inconsistent;
+            }
             if !was_connected {
                 self.idle.abort();
             }
@@ -255,6 +262,9 @@ pub enum VoiceStateOutcome {
     Updated,
     /// Disconnect for an unknown participant; no notification needed.
     UnknownParticipant,
+    /// A voice state update could not be applied due to an internal inconsistency.
+    /// The room state was not mutated; no notification is emitted.
+    Inconsistent,
 }
 
 /// Domain outcome of a shutdown request.
@@ -314,6 +324,9 @@ impl<S: SessionEventSink> Session<S> {
                                     }
                                     VoiceStateOutcome::UnknownParticipant => {
                                         warn!("room inconsistency: unknown participant on disconnect");
+                                    }
+                                    VoiceStateOutcome::Inconsistent => {
+                                        warn!("room inconsistency: voice state update could not be applied");
                                     }
                                 }
                             }

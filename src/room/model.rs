@@ -64,16 +64,20 @@ impl Room {
 
     /// Routes a voice state update to connect or update handling based on
     /// whether the participant is currently connected.
+    ///
+    /// Returns the underlying error instead of swallowing it, so callers
+    /// (e.g. `SessionState`) can distinguish a real inconsistency from a
+    /// normal update.
     pub fn handle_voice_state(
         &mut self,
         now: Instant,
         id: UserId,
         flags: VoiceStateFlags,
-    ) {
+    ) -> Result<(), RoomError> {
         if self.is_connected(id) {
-            let _ = self.handle_update(now, id, flags);
+            self.handle_update(now, id, flags)
         } else {
-            let _ = self.handle_connect(now, id, flags);
+            self.handle_connect(now, id, flags)
         }
     }
 
