@@ -148,7 +148,12 @@ pub enum SessionEvent {
     /// Carries a [`RoomLease`] whose history vectors are behind `Arc`. The
     /// Reporter should convert to owned data (`RoomSnapshot`) promptly so the
     /// `Arc` reference is released and the Room task can mutate in place.
-    Updated { room: RoomLease },
+    Updated {
+        room: RoomLease,
+        /// Monotonic application-level version, incremented only on changed==true,
+        /// used by Reporter for render gating.
+        mutation_id: u64,
+    },
     /// The session has finished and is now closed.
     Shutdown { room: RoomLease, end: Moment },
 }
@@ -163,7 +168,7 @@ pub trait SessionEventSink {
     /// Evict the previous `Updated` from the broadcast buffer (CoW).
     fn evict(&self);
     /// Publish the new room state to subscribers.
-    fn publish(&self, room: RoomLease);
+    fn publish(&self, room: RoomLease, mutation_id: u64);
     /// Finalize the session (shutdown).
     fn shutdown(&self, room: RoomLease, end: Moment);
 }
@@ -172,8 +177,8 @@ impl SessionEventSink for broadcast::Sender<SessionEvent> {
     fn evict(&self) {
         let _ = self.send(SessionEvent::PreUpdate);
     }
-    fn publish(&self, room: RoomLease) {
-        let _ = self.send(SessionEvent::Updated { room });
+    fn publish(&self, room: RoomLease, mutation_id: u64) {
+        let _ = self.send(SessionEvent::Updated { room, mutation_id });
     }
     fn shutdown(&self, room: RoomLease, end: Moment) {
         let _ = self.send(SessionEvent::Shutdown { room, end });
@@ -210,25 +215,18 @@ impl SessionState {
     pub fn on_voice_state_update(&mut self, vsu: VoiceStateUpdate) -> VoiceStateOutcome {
         if let Some(flags) = vsu.flags {
             let was_connected = self.room.is_connected(vsu.user_id);
-            if let Err(err) = self.room.handle_voice_state(vsu.now, vsu.user_id, flags) {
-                tracing::warn!(
-                    error = %err,
-                    user_id = %vsu.user_id,
-                    "room inconsistency while applying voice state update"
-                );
-                return VoiceStateOutcome::Inconsistent;
-            }
+            let changed = self.room.handle_voice_state(vsu.now, vsu.user_id, flags);
             if !was_connected {
                 self.idle.abort();
             }
-            VoiceStateOutcome::Updated
+            VoiceStateOutcome::Updated { changed }
         } else {
             match self.room.handle_disconnect(vsu.now, vsu.user_id) {
                 Ok(status) => {
                     if status == RoomStatus::Empty {
                         self.idle.start_countdown(vsu.now);
                     }
-                    VoiceStateOutcome::Updated
+                    VoiceStateOutcome::Updated { changed: true }
                 }
                 Err(_) => VoiceStateOutcome::UnknownParticipant,
             }
@@ -259,12 +257,14 @@ impl SessionState {
 #[derive(Debug, PartialEq, Eq)]
 pub enum VoiceStateOutcome {
     /// State changed; subscribers should be notified.
-    Updated,
+    Updated {
+        /// Whether state changed. Drives the monotonic application-level
+        /// mutation_id (incremented only on changed==true), used by Reporter
+        /// for render gating.
+        changed: bool,
+    },
     /// Disconnect for an unknown participant; no notification needed.
     UnknownParticipant,
-    /// A voice state update could not be applied due to an internal inconsistency.
-    /// The room state was not mutated; no notification is emitted.
-    Inconsistent,
 }
 
 /// Domain outcome of a shutdown request.
@@ -280,6 +280,9 @@ pub struct Session<S: SessionEventSink> {
     rx: mpsc::UnboundedReceiver<SessionMessage>,
     coordinator_tx: mpsc::UnboundedSender<CoordinatorInternalMessage>,
     event_sink: S,
+    /// Monotonic application-level version, incremented only on changed==true,
+    /// used by Reporter for render gating.
+    mutation_id: u64,
 }
 
 impl<S: SessionEventSink> Session<S> {
@@ -295,6 +298,7 @@ impl<S: SessionEventSink> Session<S> {
             rx,
             coordinator_tx,
             event_sink,
+            mutation_id: 0,
         }
     }
 
@@ -319,14 +323,15 @@ impl<S: SessionEventSink> Session<S> {
                             SessionMessage::VoiceStateUpdate(vsu) => {
                                 self.event_sink.evict();
                                 match self.state.on_voice_state_update(vsu) {
-                                    VoiceStateOutcome::Updated => {
-                                        self.event_sink.publish(self.state.room.lease());
+                                    VoiceStateOutcome::Updated { changed } => {
+                                        if changed {
+                                            self.mutation_id += 1;
+                                        }
+                                        self.event_sink.publish(self.state.room.lease(), self.mutation_id);
                                     }
                                     VoiceStateOutcome::UnknownParticipant => {
                                         warn!("room inconsistency: unknown participant on disconnect");
-                                    }
-                                    VoiceStateOutcome::Inconsistent => {
-                                        warn!("room inconsistency: voice state update could not be applied");
+                                        self.event_sink.publish(self.state.room.lease(), self.mutation_id);
                                     }
                                 }
                             }
@@ -484,7 +489,7 @@ mod session_smoke_tests {
         ).await.unwrap().unwrap();
 
         match event {
-            SessionEvent::Updated { room } => {
+            SessionEvent::Updated { room, .. } => {
                 assert_eq!(room.participants.len(), 1);
             }
             other => panic!("expected Updated, got {:?}", std::mem::discriminant(&other)),
@@ -539,7 +544,7 @@ mod session_smoke_tests {
         ).await.unwrap().unwrap();
 
         match event {
-            SessionEvent::Updated { room } => {
+            SessionEvent::Updated { room, .. } => {
                 assert_eq!(room.participants.len(), 1); // participant still tracked
             }
             other => panic!("expected Updated, got {:?}", std::mem::discriminant(&other)),
@@ -660,7 +665,7 @@ mod session_state_tests {
                 is_sharing_screen: false,
             }),
         });
-        assert_eq!(outcome, VoiceStateOutcome::Updated);
+        assert_eq!(outcome, VoiceStateOutcome::Updated { changed: true });
         assert_eq!(state.room.participants.len(), 1);
     }
 
@@ -700,7 +705,7 @@ mod session_state_tests {
             user_id: UserId::new(1),
             flags: None,
         });
-        assert_eq!(outcome, VoiceStateOutcome::Updated);
+        assert_eq!(outcome, VoiceStateOutcome::Updated { changed: true });
         assert!(state.idle_deadline().is_some());
     }
 

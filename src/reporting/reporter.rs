@@ -63,6 +63,9 @@ pub struct Reporter {
     anchor: ReportAnchor,
     timezone: Tz,
     image_format: image::ImageFormat,
+    /// Monotonic application-level version, incremented only on changed==true,
+    /// used by Reporter for render gating. Tracks the last mutation rendered.
+    last_rendered_mutation_id: u64,
 }
 
 impl Reporter {
@@ -108,6 +111,7 @@ impl Reporter {
             anchor,
             timezone,
             image_format,
+            last_rendered_mutation_id: 0,
         }
     }
 
@@ -370,9 +374,13 @@ impl Reporter {
                                 // (RoomSnapshot owns its Vecs), so there is
                                 // nothing to drop.
                             }
-                            Ok(SessionEvent::Updated { room }) => {
-                                last_snapshot = Some(RoomSnapshot::from_lease(room));
-                                scheduler.register_event();
+                            Ok(SessionEvent::Updated { room, mutation_id }) => {
+                                if mutation_id > self.last_rendered_mutation_id {
+                                    self.last_rendered_mutation_id = mutation_id;
+                                    let snapshot = RoomSnapshot::from_lease(room);
+                                    last_snapshot = Some(snapshot);
+                                    scheduler.register_event();
+                                }
                             }
                             Ok(SessionEvent::Shutdown { room, end }) => {
                                 let snapshot = RoomSnapshot::from_lease(room);

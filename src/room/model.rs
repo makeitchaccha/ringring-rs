@@ -65,40 +65,41 @@ impl Room {
     /// Routes a voice state update to connect or update handling based on
     /// whether the participant is currently connected.
     ///
-    /// Returns the underlying error instead of swallowing it, so callers
-    /// (e.g. `SessionState`) can distinguish a real inconsistency from a
-    /// normal update.
+    /// Returns true if the routed operation changed state.
     pub fn handle_voice_state(
         &mut self,
         now: Instant,
         id: UserId,
         flags: VoiceStateFlags,
-    ) -> Result<(), RoomError> {
+    ) -> bool {
         if self.is_connected(id) {
-            self.handle_update(now, id, flags)
+            self.handle_update(now, id, flags).unwrap_or(false)
         } else {
-            self.handle_connect(now, id, flags)
+            self.handle_connect(now, id, flags).unwrap_or(false)
         }
     }
 
+    /// Connects (or reconnects) a participant.
+    ///
+    /// Returns Ok(true) when participant connected/created.
     fn handle_connect(
         &mut self,
         now: Instant,
         id: UserId,
         flags: VoiceStateFlags,
-    ) -> Result<(), RoomError> {
+    ) -> Result<bool, RoomError> {
         debug!("handle connect");
         if let Some(participant) = self.find_participant_mut(id) {
             debug!("participant already exists");
-            participant.connect(now, flags)?;
-            return Ok(());
+            let changed = participant.connect(now, flags)?;
+            return Ok(changed);
         }
 
         debug!("newly connected, create participant");
         let mut participant = Participant::new(id);
-        participant.connect(now, flags)?;
+        let changed = participant.connect(now, flags)?;
         self.participants.push(participant);
-        Ok(())
+        Ok(changed)
     }
 
     /// Returns true if there are no participants currently connected to the room.
@@ -130,19 +131,21 @@ impl Room {
     }
 
     /// Handles updates to a participant's voice state (e.g., mute, deafen, or screen sharing).
+    ///
+    /// Returns Ok(true) when state changed.
     fn handle_update(
         &mut self,
         now: Instant,
         id: UserId,
         flags: VoiceStateFlags,
-    ) -> Result<(), RoomError> {
+    ) -> Result<bool, RoomError> {
         debug!("handle update");
         let participant = self
             .find_participant_mut(id)
             .ok_or(RoomError::ParticipantNotFound)?;
-        participant.update(now, flags)?;
+        let changed = participant.update(now, flags)?;
         debug!("finish handle update");
-        Ok(())
+        Ok(changed)
     }
 
     /// Creates a lightweight, thread-safe lease of the current room state.
@@ -235,11 +238,14 @@ impl Participant {
             .is_some_and(|a| a.interval.is_ongoing())
     }
 
+    /// Connects the participant, pushing a new audio (and possibly screen-sharing) activity.
+    ///
+    /// Returns Ok(true) when a new activity is pushed (state changed).
     pub fn connect(
         &mut self,
         now: Instant,
         flags: VoiceStateFlags,
-    ) -> Result<(), ParticipantError> {
+    ) -> Result<bool, ParticipantError> {
         if self.is_connected() {
             return Err(ParticipantError::InvalidState);
         }
@@ -261,10 +267,13 @@ impl Participant {
             let activities = Arc::make_mut(&mut self.history.screen_sharing);
             activities.push(interval);
         }
-        Ok(())
+        Ok(true)
     }
 
-    pub fn disconnect(&mut self, now: Instant) -> Result<(), ParticipantError> {
+    /// Ends the participant's ongoing audio (and screen-sharing) interval.
+    ///
+    /// Returns Ok(true) when an interval is ended (state changed).
+    pub fn disconnect(&mut self, now: Instant) -> Result<bool, ParticipantError> {
         let last_audio = Arc::make_mut(&mut self.history.audio)
             .last_mut()
             .ok_or(ParticipantError::InvalidState)?;
@@ -275,27 +284,33 @@ impl Participant {
 
         let Some(last_screen_sharing) = Arc::make_mut(&mut self.history.screen_sharing).last_mut()
         else {
-            return Ok(());
+            return Ok(true);
         };
         if last_screen_sharing.is_ongoing() {
             last_screen_sharing
                 .end_at(now)
                 .or(Err(ParticipantError::InvalidState))?;
         }
-        Ok(())
+        Ok(true)
     }
 
-    pub fn update(&mut self, now: Instant, flags: VoiceStateFlags) -> Result<(), ParticipantError> {
-        self.update_audio(now, flags)?;
-        self.update_screen_sharing(now, flags)?;
-        Ok(())
+    /// Updates the participant's voice state, splitting activities on change.
+    ///
+    /// Returns Ok(true) if audio or screen-sharing state changed.
+    pub fn update(&mut self, now: Instant, flags: VoiceStateFlags) -> Result<bool, ParticipantError> {
+        let audio_changed = self.update_audio(now, flags)?;
+        let screen_changed = self.update_screen_sharing(now, flags)?;
+        Ok(audio_changed || screen_changed)
     }
 
+    /// Updates audio state.
+    ///
+    /// Ok(false) on same state (no mutation), Ok(true) on push.
     fn update_audio(
         &mut self,
         now: Instant,
         flags: VoiceStateFlags,
-    ) -> Result<(), ParticipantError> {
+    ) -> Result<bool, ParticipantError> {
         if !self.is_connected() {
             return Err(ParticipantError::InvalidState);
         }
@@ -308,7 +323,7 @@ impl Participant {
             .map(|a| a.is_same_state(flags))
             .unwrap_or(false);
         if same_state {
-            return Ok(());
+            return Ok(false);
         }
 
         let activities = Arc::make_mut(&mut self.history.audio);
@@ -325,14 +340,17 @@ impl Participant {
             deafened: flags.is_deafened,
         };
         activities.push(activity);
-        Ok(())
+        Ok(true)
     }
 
+    /// Updates screen-sharing state.
+    ///
+    /// Ok(false) on no-op, Ok(true) on push/end.
     fn update_screen_sharing(
         &mut self,
         now: Instant,
         flags: VoiceStateFlags,
-    ) -> Result<(), ParticipantError> {
+    ) -> Result<bool, ParticipantError> {
         // Determine whether this is a no-op before cloning the history vector.
         let last_ongoing = self.history.screen_sharing.last().map(|a| a.is_ongoing());
         let is_noop = matches!(
@@ -340,14 +358,14 @@ impl Participant {
             (None, false) | (Some(false), false) | (Some(true), true)
         );
         if is_noop {
-            return Ok(());
+            return Ok(false);
         }
 
         let activities = Arc::make_mut(&mut self.history.screen_sharing);
         let Some(last_activity) = activities.last_mut() else {
             // No activity yet but sharing is starting.
             activities.push(Interval::start_at(now));
-            return Ok(());
+            return Ok(true);
         };
 
         match (last_activity.is_ongoing(), flags.is_sharing_screen) {
@@ -361,7 +379,7 @@ impl Participant {
             }
             (_, _) => {}
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Creates a thread-safe snapshot of this participant's history.
