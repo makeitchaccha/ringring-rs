@@ -165,7 +165,7 @@ impl Room {
     /// The `Arc` reference is kept low by two mechanisms:
     /// 1. The Reporter converts `RoomLease` to `RoomSnapshot` (owned `Vec`)
     ///    promptly, dropping the `Arc`.
-    /// 2. `Session` sends [`SessionEvent::PreUpdate`] before mutating, which
+    /// 2. `Session` sends [`crate::room::session::SessionEvent::PreUpdate`] before mutating, which
     ///    evicts the previous `Updated` from the broadcast buffer (capacity 1),
     ///    dropping its `Arc` reference before `Arc::make_mut` is called.
     ///
