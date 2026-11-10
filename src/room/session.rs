@@ -89,6 +89,23 @@ impl SessionHandle {
             .as_ref()
             .is_some_and(|events| !events.is_empty())
     }
+
+    /// Returns the minimum `now` among buffered `VoiceStateUpdate` messages.
+    ///
+    /// Used when reconnecting to seed the new Room's start instant so replayed
+    /// events (whose Instants originate from the previous session) land within
+    /// the new Room's timeline instead of after a fresh `Moment::now()`.
+    pub fn earliest_pending_instant(&self) -> Option<Instant> {
+        self.suspended_events.as_ref().and_then(|events| {
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    SessionMessage::VoiceStateUpdate(vsu) => Some(vsu.now),
+                    _ => None,
+                })
+                .min()
+        })
+    }
 }
 
 /// Reasons why a session might be requested to shut down.

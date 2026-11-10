@@ -154,10 +154,12 @@ impl Coordinator {
     /// This is called both for genuinely new channels and when an idle session
     /// shuts down while events were buffered during suspension (see
     /// `AcceptShutdown` with waiting events). In the reconnect case a *new*
-    /// `Room` (with a fresh `Moment::now()`) is created and the buffered
-    /// events — whose `Instant`s originate from the previous session — are
-    /// replayed into it. The rendering layer clamps activity starts with
-    /// `saturating_duration_since`, so out-of-range instants are harmless.
+    /// `Room` is created; its start instant is injected from the buffered
+    /// events' earliest instant (via `SessionHandle::earliest_pending_instant`)
+    /// so the replayed events — whose `Instant`s originate from the previous
+    /// session — land within the new Room's timeline instead of after a fresh
+    /// `Moment::now()`. When no buffered events are available, `Moment::now()`
+    /// is used.
     ///
     /// A new `Published` event is emitted for every spawn, so the `Publisher`
     /// creates a fresh reporter with a new `ReportAnchor` (a new Discord
@@ -170,6 +172,7 @@ impl Coordinator {
         channel_id: ChannelId,
         internal_tx: &mpsc::UnboundedSender<CoordinatorInternalMessage>,
         idle_timeout: Duration,
+        start: Moment,
     ) -> mpsc::UnboundedSender<SessionMessage> {
         // Capacity 1 is intentional and load-bearing: it ensures that only the
         // latest message is buffered.  When a new message (PreUpdate or Updated)
@@ -182,7 +185,7 @@ impl Coordinator {
         // change without understanding the PreUpdate/broadcast interaction.
         const SESSION_EVENT_CAPACITY: usize = 1;
         let (session_event_tx, session_event_rx) = broadcast::channel(SESSION_EVENT_CAPACITY);
-        let room = Room::new(id, guild_id, channel_id, Moment::now());
+        let room = Room::new(id, guild_id, channel_id, start);
         let tx = start_session(room, internal_tx.clone(), session_event_tx, idle_timeout);
 
         if let Err(err) = event_tx.send(CoordinatorEvent::Published {
@@ -258,6 +261,9 @@ impl Coordinator {
                                     info!(
                                         "Handle has waiting events. Creating new session and reconnecting handle..."
                                     );
+                                    let start = handle.earliest_pending_instant()
+                                        .map(|e| Moment::now().at(e))
+                                        .unwrap_or_else(Moment::now);
                                     let tx = Self::spawn_session(
                                         &self.event_tx,
                                         id_generator.next_id(),
@@ -265,6 +271,7 @@ impl Coordinator {
                                         channel_id,
                                         &internal_tx,
                                         self.idle_timeout,
+                                        start,
                                     );
                                     handle.reconnect(tx);
                                     if let Err(err) = handle.resume_delivery() {
@@ -331,6 +338,7 @@ impl Coordinator {
                                         channel_id,
                                         &internal_tx,
                                         self.idle_timeout,
+                                        Moment::now(),
                                     );
 
                                     SessionHandle::new(tx)
