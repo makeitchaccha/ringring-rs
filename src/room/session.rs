@@ -196,11 +196,8 @@ impl SessionState {
     /// Domain outcome of a voice state update.
     pub fn on_voice_state_update(&mut self, vsu: VoiceStateUpdate) -> VoiceStateOutcome {
         if let Some(flags) = vsu.flags {
-            let was_connected = self.room.is_connected(vsu.user_id);
             let changed = self.room.handle_voice_state(vsu.now, vsu.user_id, flags);
-            if !was_connected {
-                self.idle.abort();
-            }
+            self.idle.abort(); // abort is a no-op when no countdown is running
             VoiceStateOutcome::Updated { changed }
         } else {
             match self.room.handle_disconnect(vsu.now, vsu.user_id) {

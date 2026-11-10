@@ -62,44 +62,19 @@ impl Room {
         self.participants.iter_mut().find(|part| part.id == id)
     }
 
-    /// Routes a voice state update to connect or update handling based on
-    /// whether the participant is currently connected.
+    /// Applies a voice state to a participant, creating one if needed.
     ///
-    /// Returns true if the routed operation changed state.
+    /// Returns true if state changed.
     pub fn handle_voice_state(
         &mut self,
         now: Instant,
         id: UserId,
         flags: VoiceStateFlags,
     ) -> bool {
-        if self.is_connected(id) {
-            self.handle_update(now, id, flags).unwrap_or(false)
-        } else {
-            self.handle_connect(now, id, flags).unwrap_or(false)
+        if self.find_participant_mut(id).is_none() {
+            self.participants.push(Participant::new(id));
         }
-    }
-
-    /// Connects (or reconnects) a participant.
-    ///
-    /// Returns Ok(true) when participant connected/created.
-    fn handle_connect(
-        &mut self,
-        now: Instant,
-        id: UserId,
-        flags: VoiceStateFlags,
-    ) -> Result<bool, RoomError> {
-        debug!("handle connect");
-        if let Some(participant) = self.find_participant_mut(id) {
-            debug!("participant already exists");
-            let changed = participant.connect(now, flags)?;
-            return Ok(changed);
-        }
-
-        debug!("newly connected, create participant");
-        let mut participant = Participant::new(id);
-        let changed = participant.connect(now, flags)?;
-        self.participants.push(participant);
-        Ok(changed)
+        self.find_participant_mut(id).unwrap().apply(now, flags)
     }
 
     /// Returns true if there are no participants currently connected to the room.
@@ -128,24 +103,6 @@ impl Room {
         }
         debug!("finish handle disconnect");
         Ok(status)
-    }
-
-    /// Handles updates to a participant's voice state (e.g., mute, deafen, or screen sharing).
-    ///
-    /// Returns Ok(true) when state changed.
-    fn handle_update(
-        &mut self,
-        now: Instant,
-        id: UserId,
-        flags: VoiceStateFlags,
-    ) -> Result<bool, RoomError> {
-        debug!("handle update");
-        let participant = self
-            .find_participant_mut(id)
-            .ok_or(RoomError::ParticipantNotFound)?;
-        let changed = participant.update(now, flags)?;
-        debug!("finish handle update");
-        Ok(changed)
     }
 
     /// Creates a lightweight, thread-safe lease of the current room state.
@@ -238,36 +195,29 @@ impl Participant {
             .is_some_and(|a| a.interval.is_ongoing())
     }
 
-    /// Connects the participant, pushing a new audio (and possibly screen-sharing) activity.
+    /// Applies a voice state to this participant.
     ///
-    /// Returns Ok(true) when a new activity is pushed (state changed).
-    pub fn connect(
-        &mut self,
-        now: Instant,
-        flags: VoiceStateFlags,
-    ) -> Result<bool, ParticipantError> {
-        if self.is_connected() {
-            return Err(ParticipantError::InvalidState);
+    /// Connects (pushes initial intervals) if not currently connected;
+    /// otherwise updates (ending + pushing new intervals on change).
+    /// Returns true if state changed.
+    pub fn apply(&mut self, now: Instant, flags: VoiceStateFlags) -> bool {
+        if !self.is_connected() {
+            let audio = AudioActivity {
+                interval: Interval::start_at(now),
+                muted: flags.is_muted,
+                deafened: flags.is_deafened,
+            };
+            Arc::make_mut(&mut self.history.audio).push(audio);
+            if flags.is_sharing_screen {
+                Arc::make_mut(&mut self.history.screen_sharing)
+                    .push(Interval::start_at(now));
+            }
+            return true;
         }
-        let interval = Interval::start_at(now);
-        let audio_activity = AudioActivity {
-            interval,
-            muted: flags.is_muted,
-            deafened: flags.is_deafened,
-        };
 
-        // Use Arc::make_mut to implement Copy-on-Write for the history.
-        // This ensures that we only clone the vector if it's being shared
-        // (e.g., during a reporting snapshot).
-        let activities = Arc::make_mut(&mut self.history.audio);
-        activities.push(audio_activity);
-
-        if flags.is_sharing_screen {
-            let interval = Interval::start_at(now);
-            let activities = Arc::make_mut(&mut self.history.screen_sharing);
-            activities.push(interval);
-        }
-        Ok(true)
+        let audio_changed = self.update_audio(now, flags);
+        let screen_changed = self.update_screen_sharing(now, flags);
+        audio_changed || screen_changed
     }
 
     /// Ends the participant's ongoing audio (and screen-sharing) interval.
@@ -294,27 +244,10 @@ impl Participant {
         Ok(true)
     }
 
-    /// Updates the participant's voice state, splitting activities on change.
-    ///
-    /// Returns Ok(true) if audio or screen-sharing state changed.
-    pub fn update(&mut self, now: Instant, flags: VoiceStateFlags) -> Result<bool, ParticipantError> {
-        let audio_changed = self.update_audio(now, flags)?;
-        let screen_changed = self.update_screen_sharing(now, flags)?;
-        Ok(audio_changed || screen_changed)
-    }
-
     /// Updates audio state.
     ///
-    /// Ok(false) on same state (no mutation), Ok(true) on push.
-    fn update_audio(
-        &mut self,
-        now: Instant,
-        flags: VoiceStateFlags,
-    ) -> Result<bool, ParticipantError> {
-        if !self.is_connected() {
-            return Err(ParticipantError::InvalidState);
-        }
-
+    /// false on same state (no mutation), true on push.
+    fn update_audio(&mut self, now: Instant, flags: VoiceStateFlags) -> bool {
         // Check state before cloning the history vector.
         let same_state = self
             .history
@@ -323,34 +256,29 @@ impl Participant {
             .map(|a| a.is_same_state(flags))
             .unwrap_or(false);
         if same_state {
-            return Ok(false);
+            return false;
         }
 
         let activities = Arc::make_mut(&mut self.history.audio);
         let Some(last_activity) = activities.last_mut() else {
-            return Err(ParticipantError::InvalidState);
+            return false;
         };
-        last_activity
-            .interval
-            .end_at(now)
-            .or(Err(ParticipantError::InvalidState))?;
+        if last_activity.interval.end_at(now).is_err() {
+            return false;
+        }
         let activity = AudioActivity {
             interval: Interval::start_at(now),
             muted: flags.is_muted,
             deafened: flags.is_deafened,
         };
         activities.push(activity);
-        Ok(true)
+        true
     }
 
     /// Updates screen-sharing state.
     ///
-    /// Ok(false) on no-op, Ok(true) on push/end.
-    fn update_screen_sharing(
-        &mut self,
-        now: Instant,
-        flags: VoiceStateFlags,
-    ) -> Result<bool, ParticipantError> {
+    /// false on no-op, true on push/end.
+    fn update_screen_sharing(&mut self, now: Instant, flags: VoiceStateFlags) -> bool {
         // Determine whether this is a no-op before cloning the history vector.
         let last_ongoing = self.history.screen_sharing.last().map(|a| a.is_ongoing());
         let is_noop = matches!(
@@ -358,14 +286,14 @@ impl Participant {
             (None, false) | (Some(false), false) | (Some(true), true)
         );
         if is_noop {
-            return Ok(false);
+            return false;
         }
 
         let activities = Arc::make_mut(&mut self.history.screen_sharing);
         let Some(last_activity) = activities.last_mut() else {
             // No activity yet but sharing is starting.
             activities.push(Interval::start_at(now));
-            return Ok(true);
+            return true;
         };
 
         match (last_activity.is_ongoing(), flags.is_sharing_screen) {
@@ -373,13 +301,11 @@ impl Participant {
                 activities.push(Interval::start_at(now));
             }
             (true, false) => {
-                last_activity
-                    .end_at(now)
-                    .or(Err(ParticipantError::InvalidState))?;
+                let _ = last_activity.end_at(now);
             }
             (_, _) => {}
         }
-        Ok(true)
+        true
     }
 
     /// Creates a thread-safe snapshot of this participant's history.
@@ -492,11 +418,11 @@ mod cow_tests {
 
     fn make_participant() -> Participant {
         let mut p = Participant::new(UserId::new(1));
-        p.connect(Instant::now(), VoiceStateFlags {
+        p.apply(Instant::now(), VoiceStateFlags {
             is_muted: false,
             is_deafened: false,
             is_sharing_screen: false,
-        }).unwrap();
+        });
         p
     }
 
@@ -508,11 +434,11 @@ mod cow_tests {
         let ptr_before = Arc::as_ptr(&p.history.audio);
 
         // Update with same state (no-op)
-        p.update(Instant::now(), VoiceStateFlags {
+        p.apply(Instant::now(), VoiceStateFlags {
             is_muted: false,
             is_deafened: false,
             is_sharing_screen: false,
-        }).unwrap();
+        });
 
         let ptr_after = Arc::as_ptr(&p.history.audio);
         assert_eq!(ptr_before, ptr_after, "no-op update should not clone");
@@ -526,11 +452,11 @@ mod cow_tests {
         let ptr_before = Arc::as_ptr(&p.history.audio);
 
         // Update with different state (muted changed)
-        p.update(Instant::now(), VoiceStateFlags {
+        p.apply(Instant::now(), VoiceStateFlags {
             is_muted: true,
             is_deafened: false,
             is_sharing_screen: false,
-        }).unwrap();
+        });
 
         let ptr_after = Arc::as_ptr(&p.history.audio);
         assert_ne!(ptr_before, ptr_after, "state change should clone when lease held");
@@ -543,11 +469,11 @@ mod cow_tests {
         let ptr_before = Arc::as_ptr(&p.history.audio);
 
         // Update with same state, no lease held (no-op)
-        p.update(Instant::now(), VoiceStateFlags {
+        p.apply(Instant::now(), VoiceStateFlags {
             is_muted: false,
             is_deafened: false,
             is_sharing_screen: false,
-        }).unwrap();
+        });
 
         let ptr_after = Arc::as_ptr(&p.history.audio);
         assert_eq!(ptr_before, ptr_after, "no-op without lease should not clone (in-place)");
@@ -559,36 +485,14 @@ mod cow_tests {
         let ptr_before = Arc::as_ptr(&p.history.audio);
 
         // Update with different state, no lease held (state change)
-        p.update(Instant::now(), VoiceStateFlags {
+        p.apply(Instant::now(), VoiceStateFlags {
             is_muted: true,
             is_deafened: false,
             is_sharing_screen: false,
-        }).unwrap();
+        });
 
         let ptr_after = Arc::as_ptr(&p.history.audio);
         assert_eq!(ptr_before, ptr_after, "state change without lease should be in-place (no clone)");
-    }
-
-    #[test]
-    fn connect_returns_invalid_state_when_already_connected() {
-        let mut p = make_participant();
-        let result = p.connect(Instant::now(), VoiceStateFlags {
-            is_muted: false, is_deafened: false, is_sharing_screen: false,
-        });
-        assert!(matches!(result, Err(ParticipantError::InvalidState)),
-            "connecting an already-connected participant should fail");
-    }
-
-    #[test]
-    fn update_returns_invalid_state_when_not_connected() {
-        let p_id = UserId::new(1);
-        let mut p = Participant::new(p_id);
-        // Not connected yet
-        let result = p.update(Instant::now(), VoiceStateFlags {
-            is_muted: false, is_deafened: false, is_sharing_screen: false,
-        });
-        assert!(matches!(result, Err(ParticipantError::InvalidState)),
-            "updating a non-connected participant should fail");
     }
 
     #[test]
@@ -659,11 +563,11 @@ mod cow_tests {
         let lease_audio_len_before = lease.history.audio.len();
 
         // Update with state change while lease is held
-        p.update(Instant::now(), VoiceStateFlags {
+        p.apply(Instant::now(), VoiceStateFlags {
             is_muted: true,
             is_deafened: false,
             is_sharing_screen: false,
-        }).unwrap();
+        });
 
         // Lease should still hold the old data (CoW isolation)
         assert_eq!(lease.history.audio.len(), lease_audio_len_before,
@@ -687,11 +591,11 @@ mod cow_tests {
         let ptr_before = Arc::as_ptr(&p.history.screen_sharing);
 
         // No sharing → no sharing (no-op)
-        p.update(Instant::now(), VoiceStateFlags {
+        p.apply(Instant::now(), VoiceStateFlags {
             is_muted: false,
             is_deafened: false,
             is_sharing_screen: false,
-        }).unwrap();
+        });
 
         let ptr_after = Arc::as_ptr(&p.history.screen_sharing);
         assert_eq!(ptr_before, ptr_after, "no-op screen sharing should not clone");
@@ -702,21 +606,21 @@ mod cow_tests {
     fn update_screen_sharing_change_clones() {
         // First, start sharing (no lease held)
         let mut p = make_participant();
-        p.update(Instant::now(), VoiceStateFlags {
+        p.apply(Instant::now(), VoiceStateFlags {
             is_muted: false,
             is_deafened: false,
             is_sharing_screen: true,
-        }).unwrap();
+        });
         // Now hold a lease
         let lease = p.lease();
         let ptr_before = Arc::as_ptr(&p.history.screen_sharing);
 
         // Stop sharing (state change → should clone)
-        p.update(Instant::now(), VoiceStateFlags {
+        p.apply(Instant::now(), VoiceStateFlags {
             is_muted: false,
             is_deafened: false,
             is_sharing_screen: false,
-        }).unwrap();
+        });
 
         let ptr_after = Arc::as_ptr(&p.history.screen_sharing);
         assert_ne!(ptr_before, ptr_after, "screen sharing change should clone when lease held");
