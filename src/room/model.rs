@@ -71,10 +71,13 @@ impl Room {
         id: UserId,
         flags: VoiceStateFlags,
     ) -> bool {
-        if self.find_participant_mut(id).is_none() {
-            self.participants.push(Participant::new(id));
+        if let Some(p) = self.participants.iter_mut().find(|p| p.id == id) {
+            return p.apply(now, flags);
         }
-        self.find_participant_mut(id).unwrap().apply(now, flags)
+        let mut p = Participant::new(id);
+        let changed = p.apply(now, flags);
+        self.participants.push(p);
+        changed
     }
 
     /// Returns true if there are no participants currently connected to the room.
