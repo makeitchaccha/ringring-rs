@@ -62,7 +62,7 @@ async fn main() {
     let subscription_provider = Arc::new(StaticSubscriptionProvider::new(subscriptions));
 
     // 3. Spawn Coordinator (The Heart)
-    let (coordinator_handle, coordinator_event_rx) =
+    let (coordinator_handle, coordinator_event_rx, _coordinator_join_handle) =
         Coordinator::spawn(Duration::from_secs(config.idle_timeout_secs));
 
     // 4. Set gateway intents

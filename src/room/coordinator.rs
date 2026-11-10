@@ -133,7 +133,7 @@ impl Coordinator {
         }
     }
 
-    pub fn spawn(idle_timeout: Duration) -> (CoordinatorHandle, mpsc::UnboundedReceiver<CoordinatorEvent>) {
+    pub fn spawn(idle_timeout: Duration) -> (CoordinatorHandle, mpsc::UnboundedReceiver<CoordinatorEvent>, tokio::task::JoinHandle<()>) {
         // Unbounded channels are used intentionally: the message rate is bounded
         // by Discord's gateway rate limits (VOICE_STATE_UPDATE), so backpressure
         // is not a concern in practice.  Bounded channels would risk dropping
@@ -142,9 +142,9 @@ impl Coordinator {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let coordinator = Self::new(rx, event_tx, idle_timeout);
 
-        tokio::spawn(coordinator.run());
+        let handle = tokio::spawn(coordinator.run());
 
-        (CoordinatorHandle::new(tx), event_rx)
+        (CoordinatorHandle::new(tx), event_rx, handle)
     }
 
     /// Spawns a new `Session` for `channel_id` and announces it via
@@ -293,7 +293,14 @@ impl Coordinator {
                         }
                     }
 
-                    .. if let Some(message) = self.rx.recv() => {
+                    .. if let result = self.rx.recv() => {
+                        let message = match result {
+                            Some(message) => message,
+                            None => {
+                                info!("Coordinator command channel closed, stopping");
+                                break;
+                            }
+                        };
                         match message {
                             CoordinatorMessage::Track {
                                 channel_id,
@@ -419,7 +426,7 @@ mod coordinator_smoke_tests {
 
     #[tokio::test]
     async fn coordinator_spawns_session_on_track() {
-        let (handle, mut event_rx) = Coordinator::spawn(std::time::Duration::from_secs(60));
+        let (handle, mut event_rx, _join) = Coordinator::spawn(std::time::Duration::from_secs(60));
         let now = Instant::now();
 
         handle.track(ChannelId::new(1), GuildId::new(1), VoiceStateUpdate {
@@ -446,7 +453,7 @@ mod coordinator_smoke_tests {
 
     #[tokio::test]
     async fn coordinator_does_not_spawn_on_notify_without_session() {
-        let (handle, mut event_rx) = Coordinator::spawn(std::time::Duration::from_secs(60));
+        let (handle, mut event_rx, _join) = Coordinator::spawn(std::time::Duration::from_secs(60));
         let now = Instant::now();
 
         // Notify for a channel with no existing session → should not spawn
