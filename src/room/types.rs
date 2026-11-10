@@ -3,6 +3,7 @@ use chrono::TimeDelta;
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
 use std::fmt::Display;
 use tokio::time::Instant;
+use tracing::warn;
 
 #[derive(Copy, Clone, Debug)]
 pub struct RoomId(u64);
@@ -70,10 +71,17 @@ impl Moment {
     /// The wall-clock time is shifted by the same delta as the monotonic
     /// instant, preserving the correspondence between wall and mono time.
     ///
-    /// If `new_mono <= self.mono`, the delta saturates to zero and `self`
-    /// is returned unchanged (no wall shift), preserving monotonicity.
+    /// Defensive boundary: if `new_mono <= self.mono` (stale/reconnect instant),
+    /// the delta saturates to zero and `self` is returned unchanged (no wall
+    /// shift), preserving monotonicity. This is an explicit clamp, not a silent
+    /// swallow — a `tracing::warn!` is emitted so the condition is observable.
     pub fn at(&self, new_mono: Instant) -> Self {
         if new_mono <= self.mono {
+            warn!(
+                "Moment::at clamping: new_mono ({:?}) <= self.mono ({:?}); returning self unchanged (stale/reconnect instant)",
+                new_mono,
+                self.mono
+            );
             return *self;
         }
         let delta = TimeDelta::from_std(new_mono - self.mono).expect("Duration overflow");

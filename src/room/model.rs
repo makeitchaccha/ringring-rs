@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, warn};
 
 #[derive(Debug, Error)]
 pub enum RoomError {
@@ -377,6 +377,11 @@ impl Interval {
             Some(_) => Err(IntervalError::AlreadyEnded),
             None => {
                 if now < self.start {
+                    warn!(
+                        "Interval::end_at clamping: now ({:?}) < start ({:?}); setting end = start",
+                        now,
+                        self.start
+                    );
                     self.end = Some(self.start);
                 } else {
                     self.end = Some(now);
