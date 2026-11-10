@@ -376,7 +376,11 @@ impl Interval {
         match self.end {
             Some(_) => Err(IntervalError::AlreadyEnded),
             None => {
-                self.end = Some(now);
+                if now < self.start {
+                    self.end = Some(self.start);
+                } else {
+                    self.end = Some(now);
+                }
                 Ok(())
             }
         }
@@ -395,14 +399,19 @@ impl Interval {
     }
 
     pub fn overlaps(&self, range_start: Instant, range_end: Instant) -> bool {
+        if let Some(end) = self.end
+            && end < self.start
+        {
+            return false;
+        }
         self.start <= range_end && self.end.is_none_or(|end| range_start <= end)
     }
 
     pub fn calculate_duration(&self, now: Instant) -> Duration {
         if let Some(end) = self.end {
-            end.duration_since(self.start)
+            end.saturating_duration_since(self.start).max(Duration::ZERO)
         } else {
-            now.duration_since(self.start)
+            now.saturating_duration_since(self.start)
         }
     }
 }

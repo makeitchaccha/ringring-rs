@@ -70,12 +70,12 @@ impl Moment {
     /// The wall-clock time is shifted by the same delta as the monotonic
     /// instant, preserving the correspondence between wall and mono time.
     ///
-    /// # Panics
-    /// Panics if `new_mono < self.mono` (Instant underflow) or if the
-    /// resulting time delta exceeds ~292 million years.  In practice,
-    /// `new_mono` is always a later `Instant` from the same session, so
-    /// this never triggers.
+    /// If `new_mono <= self.mono`, the delta saturates to zero and `self`
+    /// is returned unchanged (no wall shift), preserving monotonicity.
     pub fn at(&self, new_mono: Instant) -> Self {
+        if new_mono <= self.mono {
+            return *self;
+        }
         let delta = TimeDelta::from_std(new_mono - self.mono).expect("Duration overflow");
 
         let new_wall = Timestamp::from(*self.wall + delta);
