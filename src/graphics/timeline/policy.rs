@@ -63,3 +63,36 @@ impl AspectRatioPolicy {
         }
     }
 }
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    #[test]
+    fn calculate_timeline_width_clamped_to_min() {
+        let p = AspectRatioPolicy {
+            min_width_ratio: 12.0,
+            min_height_ratio: 7.0,
+        };
+        let w = p.calculate_timeline_width(100.0, 110.0, 900.0);
+        assert_eq!(w, 900.0);
+    }
+
+    #[test]
+    fn calculate_timeline_width_ratio_path() {
+        let p = AspectRatioPolicy {
+            min_width_ratio: 12.0,
+            min_height_ratio: 7.0,
+        };
+        let w = p.calculate_timeline_width(1000.0, 110.0, 900.0);
+        let expected = 12.0 * 1000.0 / 7.0 - 110.0;
+        assert!((w - expected).abs() < 1e-3);
+    }
+
+    #[test]
+    fn min_aspect_ratio_12x7_constructor() {
+        let p = AspectRatioPolicy::min_aspect_ratio_12x7();
+        assert_eq!(p.min_width_ratio, 12.0);
+        assert_eq!(p.min_height_ratio, 7.0);
+    }
+}

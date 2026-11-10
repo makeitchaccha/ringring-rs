@@ -145,3 +145,48 @@ impl Layout {
         .unwrap()
     }
 }
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn margin_horizontal_vertical() {
+        let m = Margin {
+            left: 1.0,
+            top: 2.0,
+            right: 3.0,
+            bottom: 4.0,
+        };
+        assert_eq!(m.horizontal(), 4.0);
+        assert_eq!(m.vertical(), 6.0);
+    }
+
+    #[test]
+    fn calculate_n_entries_zero_guard() {
+        let cfg = LayoutConfig::default();
+        let l0 = cfg.calculate(0);
+        let l1 = cfg.calculate(1);
+        assert_eq!(l0.total_height(), l1.total_height());
+        assert_eq!(l0.total_width(), l1.total_width());
+    }
+
+    #[test]
+    fn calculate_grows_with_entries() {
+        let cfg = LayoutConfig::default();
+        let l1 = cfg.calculate(1);
+        let l3 = cfg.calculate(3);
+        assert!(l3.total_height() > l1.total_height());
+    }
+
+    #[test]
+    fn calculate_basic_values() {
+        let cfg = LayoutConfig::default();
+        let l = cfg.calculate(2);
+        // total_height = label_area_height + entry_height*2 + margin.vertical()
+        // margin vertical default 10+10=20
+        let expected_h = 40.0 + 70.0 * 2.0 + 20.0;
+        assert_eq!(l.total_height(), expected_h);
+        assert!(l.total_width() > 0.0);
+    }
+}

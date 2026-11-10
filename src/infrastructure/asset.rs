@@ -402,7 +402,11 @@ impl AssetProvider {
             .entry((guild_id, user_id))
             .or_try_insert_with::<_, AssetError>(async {
                 let avatar_url = self.serenity.get_member(guild_id, user_id).await?.face();
-                let request = self.client.get(avatar_url).build()?;
+                let request = self
+                    .client
+                    .get(&avatar_url)
+                    .timeout(std::time::Duration::from_secs(10))
+                    .build()?;
 
                 let mut response = self.client.execute(request).await?;
 
