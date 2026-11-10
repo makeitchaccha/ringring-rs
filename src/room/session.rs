@@ -297,7 +297,14 @@ impl<S: SessionEventSink> Session<S> {
             tokio_select!(
                 biased,
                 match .. {
-                    .. if let Some(cmd) = self.rx.recv() => {
+                    .. if let result = self.rx.recv() => {
+                        let cmd = match result {
+                            Some(cmd) => cmd,
+                            None => {
+                                info!("Session command channel closed, stopping");
+                                break;
+                            }
+                        };
                         match cmd {
                             SessionMessage::VoiceStateUpdate(vsu) => {
                                 self.event_sink.evict();
