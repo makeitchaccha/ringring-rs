@@ -17,7 +17,6 @@ use serenity::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use thiserror::__private18::AsDynError;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -33,7 +32,7 @@ async fn main() {
     let config = match load_config(cli.config.as_path()) {
         Ok(config) => config,
         Err(error) => {
-            error!(error = %error.as_dyn_error(), "Failed to load config");
+            error!(?error, "Failed to load config");
             return;
         }
     };
