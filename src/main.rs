@@ -17,10 +17,11 @@ use serenity::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info};
+use anyhow::Context;
+use tracing::info;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("Unable to install TLS");
@@ -29,13 +30,7 @@ async fn main() {
 
     let cli = cli::Cli::parse();
 
-    let config = match load_config(cli.config.as_path()) {
-        Ok(config) => config,
-        Err(error) => {
-            error!(?error, "Failed to load config");
-            return;
-        }
-    };
+    let config = load_config(cli.config.as_path()).context("failed to load config")?;
 
     let subscriptions = config
         .subscriptions
@@ -71,7 +66,7 @@ async fn main() {
     let mut client = Client::builder(config.discord.token, intents)
         .event_handler(Arc::new(VoiceHandler::new(coordinator_handle)))
         .await
-        .expect("Err creating client");
+        .context("failed to create client")?;
 
     let asset_provider = AssetProvider::new(reqwest::Client::new(), client.http.clone());
 
@@ -87,7 +82,6 @@ async fn main() {
 
     // 8. Start the bot
     info!("Bot is ready and listening for events");
-    if let Err(why) = client.start().await {
-        error!("Client error: {:?}", why);
-    }
+    client.start().await.context("client error")?;
+    Ok(())
 }
