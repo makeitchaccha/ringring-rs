@@ -3,7 +3,6 @@ use chrono::TimeDelta;
 use serenity::all::{ChannelId, GuildId, Timestamp, UserId, VoiceState};
 use std::fmt::Display;
 use tokio::time::Instant;
-use tracing::warn;
 
 #[derive(Copy, Clone, Debug)]
 pub struct RoomId(u64);
@@ -68,23 +67,24 @@ impl Moment {
 
     /// Computes a new `Moment` with an updated monotonic instant.
     ///
+    /// Computes a new `Moment` with an updated monotonic instant.
+    ///
     /// The wall-clock time is shifted by the same delta as the monotonic
     /// instant, preserving the correspondence between wall and mono time.
+    /// Works in both directions: if `new_mono` is before `self.mono`, the wall
+    /// clock shifts backward by the absolute delta.
     ///
-    /// Defensive boundary: if `new_mono <= self.mono` (stale/reconnect instant),
-    /// the delta saturates to zero and `self` is returned unchanged (no wall
-    /// shift), preserving monotonicity. This is an explicit clamp, not a silent
-    /// swallow — a `tracing::warn!` is emitted so the condition is observable.
+    /// This is necessary for reconnect scenarios where stale Instants from a
+    /// previous session are replayed into a new Room.  The wall-clock
+    /// correspondence is preserved rather than saturated, so downstream
+    /// consumers (e.g. rendering) can clamp as needed via
+    /// `saturating_duration_since`.
     pub fn at(&self, new_mono: Instant) -> Self {
-        if new_mono <= self.mono {
-            warn!(
-                "Moment::at clamping: new_mono ({:?}) <= self.mono ({:?}); returning self unchanged (stale/reconnect instant)",
-                new_mono,
-                self.mono
-            );
-            return *self;
-        }
-        let delta = TimeDelta::from_std(new_mono - self.mono).expect("Duration overflow");
+        let delta = if new_mono >= self.mono {
+            TimeDelta::from_std(new_mono - self.mono).expect("Duration overflow")
+        } else {
+            -TimeDelta::from_std(self.mono - new_mono).expect("Duration overflow")
+        };
 
         let new_wall = Timestamp::from(*self.wall + delta);
 
