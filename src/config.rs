@@ -60,6 +60,7 @@ mod config_tests {
     use std::fs;
     use std::path::PathBuf;
 
+    // Placeholder with the shape Token requires (3 dot-separated parts); not a real secret.
     const TOKEN: &str = "test.test.test";
 
     fn temp_path(name: &str) -> PathBuf {
